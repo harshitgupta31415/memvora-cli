@@ -35,6 +35,9 @@ The `auth` command verifies the website-issued token with FastAPI before it is s
 the CLI stores a SHA-512 user hash for this computer, binds the token to that hash on the server, and starts the
 background sync agent once on Windows.
 
+If you run `watch` before auth, it will prompt for the website CLI token and FastAPI URL, then continue into
+terminal capture after verification.
+
 `watch` is a shortcut for `python -m ai_memory_cli watch`. If Windows Device Guard blocks the generated launcher, keep using `python -m ai_memory_cli watch`.
 On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.
 

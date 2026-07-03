@@ -174,6 +174,10 @@ def client_identity(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def has_verified_auth(config: dict[str, Any]) -> bool:
+    return bool(config.get("token") and config.get("auth_verified_at") and config.get("user_hash") and config.get("local_user_hash"))
+
+
 def agent_state_path(home: Path) -> Path:
     return home / "agent.json"
 
@@ -425,9 +429,56 @@ def verify_cli_auth(home: Path, config: dict[str, Any], token: str) -> dict[str,
     return response
 
 
+def finish_auth(home: Path, config: dict[str, Any], token: str, start_agent: bool = True) -> dict[str, Any]:
+    config["pending_token_hash"] = sha256_text(token)
+    response = verify_cli_auth(home, config, token)
+    config["authed_at"] = utc_now()
+    save_config(home, config)
+
+    print(f"Saved CLI auth in {config_path(home)}")
+    print(f"GitHub account: {response.get('github_user') or config.get('github_user') or '-'}")
+    print(f"Local user hash: {str(config.get('user_hash') or '')[:24]}...")
+    if response.get("account_storage_dir"):
+        print(f"Server account storage: {response['account_storage_dir']}")
+
+    if start_agent:
+        ensure_agent_started_once(home, config)
+
+    try:
+        synced = sync_events(home, config, quiet=True)
+        if synced:
+            print(f"Synced {synced} queued terminal event(s).")
+    except Exception as exc:
+        print(f"Auth saved. Sync will retry later: {exc}", file=sys.stderr)
+
+    return response
+
+
+def prompt_for_auth(home: Path, config: dict[str, Any]) -> dict[str, Any]:
+    print("AI Memory needs website auth before watch can capture and sync.")
+    print("Generate a CLI token from the website Integrations page, then paste it here.")
+    token = getpass.getpass("Website CLI token: ").strip()
+    if not token:
+        raise SystemExit("No token entered. Generate a CLI token from the website and run watch again.")
+
+    current_api_url = api_url(config)
+    entered_api_url = input(f"FastAPI URL [{current_api_url}]: ").strip()
+    if entered_api_url:
+        config["api_url"] = entered_api_url.rstrip("/")
+
+    try:
+        return finish_auth(home, config, token, start_agent=True)
+    except urllib.error.HTTPError as exc:
+        save_config(home, config)
+        raise SystemExit(f"CLI auth failed: {describe_http_error(exc)}") from exc
+    except Exception as exc:
+        save_config(home, config)
+        raise SystemExit(f"CLI auth failed. Keep the local FastAPI server running and generate a fresh website token: {exc}") from exc
+
+
 def require_verified_auth(home: Path, config: dict[str, Any]) -> str:
     token = require_token(config)
-    if config.get("auth_verified_at") and config.get("user_hash") and config.get("local_user_hash"):
+    if has_verified_auth(config):
         return token
 
     try:
@@ -545,7 +596,7 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
         if not quiet:
             print("No CLI token saved. Events remain queued until python -m ai_memory_cli auth is configured.")
         return 0
-    if not (config.get("auth_verified_at") and config.get("user_hash")):
+    if not has_verified_auth(config):
         try:
             verify_cli_auth(home, config, token)
             save_config(home, config)
@@ -661,31 +712,14 @@ def command_auth(args: argparse.Namespace) -> int:
         config["api_url"] = args.api_url.rstrip("/")
 
     token = args.token.strip()
-    config["pending_token_hash"] = sha256_text(token)
     try:
-        response = verify_cli_auth(home, config, token)
+        finish_auth(home, config, token, start_agent=not args.no_agent)
     except urllib.error.HTTPError as exc:
         save_config(home, config)
         raise SystemExit(f"CLI auth failed: {describe_http_error(exc)}") from exc
     except Exception as exc:
         save_config(home, config)
         raise SystemExit(f"CLI auth failed. Keep the local FastAPI server running and generate a fresh website token: {exc}") from exc
-
-    config["authed_at"] = utc_now()
-    save_config(home, config)
-    print(f"Saved CLI auth in {config_path(home)}")
-    print(f"GitHub account: {response.get('github_user') or config.get('github_user') or '-'}")
-    print(f"Local user hash: {str(config.get('user_hash') or '')[:24]}...")
-    if response.get("account_storage_dir"):
-        print(f"Server account storage: {response['account_storage_dir']}")
-
-    if not args.no_agent:
-        ensure_agent_started_once(home, config)
-
-    try:
-        sync_events(home, config, quiet=True)
-    except Exception as exc:
-        print(f"Auth saved. Sync will retry later: {exc}", file=sys.stderr)
     return 0
 
 
@@ -812,6 +846,10 @@ def command_run(args: argparse.Namespace) -> int:
 def command_watch(args: argparse.Namespace) -> int:
     home = cli_home()
     config = load_config(home)
+    if not has_verified_auth(config):
+        prompt_for_auth(home, config)
+        config = load_config(home)
+
     print("AI Memory watch mode. Type commands to run and capture. Type exit to stop.")
     while True:
         try:
@@ -1120,7 +1158,7 @@ def command_status(_: argparse.Namespace) -> int:
     print(f"Project: {config.get('project') or '-'}")
     print(f"Repository: {config.get('repository') or '-'}")
     print(f"Workspace: {config.get('workspace_path') or '.'}")
-    print(f"Token: {'verified' if config.get('auth_verified_at') and config.get('user_hash') else 'saved' if config.get('token') else 'missing'}")
+    print(f"Token: {'verified' if has_verified_auth(config) else 'saved' if config.get('token') else 'missing'}")
     print(f"GitHub account: {config.get('github_user') or '-'}")
     print(f"User hash: {str(config.get('user_hash') or '-')[:24]}{'...' if config.get('user_hash') else ''}")
     print(f"Events: {event_count} total, {outbox_count} queued, {sent_count} synced receipts")
