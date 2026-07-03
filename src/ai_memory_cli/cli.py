@@ -43,6 +43,7 @@ SHELL_NOT_FOUND_PATTERNS = [
     "command not found",
 ]
 CLEAR_COMMANDS = {"cls", "clear"}
+INTERACTIVE_SHELLS = {"powershell", "pwsh", "cmd", "bash", "sh", "zsh", "fish"}
 
 
 def utc_now() -> str:
@@ -326,6 +327,44 @@ def is_clear_command(command: str) -> bool:
     return normalize_command(command).lower() in CLEAR_COMMANDS
 
 
+def is_interactive_shell_command(command: str) -> bool:
+    tokens = normalize_command(command).lower().split()
+    if not tokens:
+        return False
+    launcher = tokens[0].removesuffix(".exe")
+    if launcher not in INTERACTIVE_SHELLS:
+        return False
+    if launcher in {"powershell", "pwsh"}:
+        return len(tokens) == 1 or "-noexit" in tokens
+    if launcher == "cmd":
+        return len(tokens) == 1 or "/k" in tokens
+    return len(tokens) == 1
+
+
+def command_invocation(command: str) -> tuple[str | list[str], bool]:
+    if os.name == "nt":
+        powershell = shutil.which("powershell") or shutil.which("pwsh")
+        if powershell:
+            return [powershell, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], False
+    return command, True
+
+
+def run_external_command(command: str, cwd: Path, capture: bool) -> subprocess.CompletedProcess[str] | int:
+    invocation, use_shell = command_invocation(command)
+    if capture:
+        return subprocess.run(
+            invocation,
+            shell=use_shell,
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    return subprocess.call(invocation, shell=use_shell, cwd=str(cwd), stdin=subprocess.DEVNULL)
+
+
 def clear_console() -> None:
     command = "cls" if os.name == "nt" else "clear"
     try:
@@ -341,10 +380,15 @@ def normalize_output(stdout: str, stderr: str) -> str:
 
 
 def selected_shell() -> str:
+    if os.name == "nt":
+        if shutil.which("powershell"):
+            return "powershell"
+        if shutil.which("pwsh"):
+            return "pwsh"
     shell = os.getenv("SHELL") or os.getenv("COMSPEC") or ""
     if shell:
         return Path(shell).name
-    return "powershell" if os.name == "nt" else "sh"
+    return "sh"
 
 
 def command_line(parts: list[str]) -> str:
@@ -649,25 +693,23 @@ def capture_command(home: Path, config: dict[str, Any], command: str, include_ex
         clear_console()
         return 0
 
+    if is_interactive_shell_command(command):
+        print("ai-memory: watch already runs commands through a shell. Type the command directly, for example: ls")
+        return 0
+
     require_verified_auth(home, config)
     workspace = Path(str(config.get("workspace_path") or ".")).expanduser()
     cwd = workspace if workspace.exists() else Path.cwd()
 
     if is_excluded(command, config) and not include_excluded:
         print(f"ai-memory: running without capture because this command is excluded: {command}", file=sys.stderr)
-        return subprocess.call(command, shell=True, cwd=str(cwd))
+        return int(run_external_command(command, cwd, capture=False))
 
     started_at = utc_now()
     started_monotonic = time.monotonic()
-    completed = subprocess.run(
-        command,
-        shell=True,
-        cwd=str(cwd),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+    completed = run_external_command(command, cwd, capture=True)
+    if isinstance(completed, int):
+        return completed
     ended_at = utc_now()
     duration_ms = int((time.monotonic() - started_monotonic) * 1000)
 
@@ -887,6 +929,9 @@ def command_watch(args: argparse.Namespace) -> int:
             break
         if is_clear_command(command):
             clear_console()
+            continue
+        if is_interactive_shell_command(command):
+            print("ai-memory: do not start a nested shell here. Type commands directly, for example: ls")
             continue
         capture_command(home, config, command, args.include_excluded, "watch")
     return 0

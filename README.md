@@ -47,6 +47,7 @@ On Windows, `python -m ai_memory_cli ...` is the safest form because it avoids P
 
 Inside `watch`, type the real command you want to capture, for example `python --version`. Do not type `python -m ai_memory_cli run -- ...` inside `watch`, or you will capture the nested CLI command too.
 Use `cls` on Windows or `clear` on Unix shells to clear the watch screen; those control commands are not stored or synced.
+On Windows, commands run through PowerShell, so type `ls` directly. Do not type `powershell` or `cmd` inside `watch`; nested shell launchers are ignored and not stored.
 
 ## Background agent
 
