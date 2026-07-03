@@ -112,6 +112,67 @@ def scheduler_python_executable(background: bool = True) -> str:
     return str(executable)
 
 
+def windows_startup_dir() -> Path:
+    appdata = os.getenv("APPDATA")
+    if not appdata:
+        raise SystemExit("APPDATA is not set; cannot locate the Windows Startup folder.")
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def windows_startup_script_path() -> Path:
+    return windows_startup_dir() / "AI Memory CLI Agent.vbs"
+
+
+def write_windows_startup_script(interval: int, limit: int) -> Path:
+    startup_dir = windows_startup_dir()
+    startup_dir.mkdir(parents=True, exist_ok=True)
+    script_path = windows_startup_script_path()
+    python_executable = scheduler_python_executable(background=False)
+    command = f'"{python_executable}" -m ai_memory_cli agent run --interval {interval} --limit {limit}'
+    escaped_command = command.replace('"', '""')
+    script_path.write_text(
+        "\n".join(
+            [
+                "Set shell = CreateObject(\"WScript.Shell\")",
+                f"shell.Run \"{escaped_command}\", 0, False",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return script_path
+
+
+def start_detached_agent(interval: int, limit: int) -> int:
+    python_executable = scheduler_python_executable(background=True)
+    command = [
+        python_executable,
+        "-m",
+        "ai_memory_cli",
+        "agent",
+        "run",
+        "--interval",
+        str(interval),
+        "--limit",
+        str(limit),
+    ]
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            creationflags |= subprocess.CREATE_NO_WINDOW
+
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=creationflags,
+    )
+    return int(process.pid)
+
+
 def normalize_command(command: str) -> str:
     return " ".join(command.strip().split())
 
@@ -630,35 +691,47 @@ def command_agent_install(args: argparse.Namespace) -> int:
     }
     save_config(home, config)
 
-    python_executable = scheduler_python_executable(background=not args.console)
-    task_command = (
-        f'"{python_executable}" -m ai_memory_cli agent run '
-        f"--interval {int(args.interval)} --limit {int(args.limit)}"
-    )
-    result = subprocess.run(
-        [
-            "schtasks",
-            "/Create",
-            "/TN",
-            args.task_name,
-            "/SC",
-            "ONLOGON",
-            "/TR",
-            task_command,
-            "/F",
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        raise SystemExit((result.stderr or result.stdout).strip())
+    if args.method in {"auto", "task"}:
+        python_executable = scheduler_python_executable(background=not args.console)
+        task_command = (
+            f'"{python_executable}" -m ai_memory_cli agent run '
+            f"--interval {int(args.interval)} --limit {int(args.limit)}"
+        )
+        result = subprocess.run(
+            [
+                "schtasks",
+                "/Create",
+                "/TN",
+                args.task_name,
+                "/SC",
+                "ONLOGON",
+                "/TR",
+                task_command,
+                "/F",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode == 0:
+            append_log(home, f"installed Windows scheduled task: {args.task_name}")
+            print(f"Installed startup agent task: {args.task_name}")
+            print("It starts when you log in. Start it now with:")
+            print("python -m ai_memory_cli agent start")
+            return 0
 
-    append_log(home, f"installed Windows scheduled task: {args.task_name}")
-    print(f"Installed startup agent task: {args.task_name}")
+        if args.method == "task":
+            raise SystemExit((result.stderr or result.stdout).strip())
+
+        print("Task Scheduler install failed; falling back to user Startup folder.")
+        print((result.stderr or result.stdout).strip())
+
+    script_path = write_windows_startup_script(int(args.interval), int(args.limit))
+    append_log(home, f"installed Windows startup script: {script_path}")
+    print(f"Installed startup agent script: {script_path}")
     print("It starts when you log in. Start it now with:")
-    print("python -m ai_memory_cli agent start")
+    print("python -m ai_memory_cli agent run")
     return 0
 
 
@@ -666,6 +739,7 @@ def command_agent_uninstall(args: argparse.Namespace) -> int:
     if os.name != "nt":
         raise SystemExit("agent uninstall currently supports Windows Task Scheduler only.")
 
+    removed = False
     result = subprocess.run(
         ["schtasks", "/Delete", "/TN", args.task_name, "/F"],
         capture_output=True,
@@ -673,11 +747,19 @@ def command_agent_uninstall(args: argparse.Namespace) -> int:
         encoding="utf-8",
         errors="replace",
     )
-    if result.returncode != 0:
-        raise SystemExit((result.stderr or result.stdout).strip())
+    if result.returncode == 0:
+        removed = True
+
+    script_path = windows_startup_script_path()
+    if script_path.exists():
+        script_path.unlink()
+        removed = True
 
     append_log(cli_home(), f"uninstalled Windows scheduled task: {args.task_name}")
-    print(f"Removed startup agent task: {args.task_name}")
+    if removed:
+        print("Removed startup agent registration.")
+    else:
+        print("No startup agent registration was found.")
     return 0
 
 
@@ -685,6 +767,8 @@ def command_agent_start(args: argparse.Namespace) -> int:
     if os.name != "nt":
         raise SystemExit("agent start currently supports Windows Task Scheduler only.")
 
+    home = cli_home()
+    config = load_config(home)
     result = subprocess.run(
         ["schtasks", "/Run", "/TN", args.task_name],
         capture_output=True,
@@ -692,9 +776,16 @@ def command_agent_start(args: argparse.Namespace) -> int:
         encoding="utf-8",
         errors="replace",
     )
-    if result.returncode != 0:
-        raise SystemExit((result.stderr or result.stdout).strip())
-    print(f"Started agent task: {args.task_name}")
+    if result.returncode == 0:
+        print(f"Started agent task: {args.task_name}")
+        return 0
+
+    agent_config = config.get("agent") if isinstance(config.get("agent"), dict) else {}
+    interval = int(agent_config.get("interval_seconds") or DEFAULT_AGENT_INTERVAL_SECONDS)
+    limit = int(agent_config.get("limit") or 50)
+    pid = start_detached_agent(interval, limit)
+    append_log(home, f"started detached agent pid={pid}")
+    print(f"Started detached agent process: pid={pid}")
     return 0
 
 
@@ -702,6 +793,7 @@ def command_agent_stop(args: argparse.Namespace) -> int:
     if os.name != "nt":
         raise SystemExit("agent stop currently supports Windows Task Scheduler only.")
 
+    home = cli_home()
     result = subprocess.run(
         ["schtasks", "/End", "/TN", args.task_name],
         capture_output=True,
@@ -709,10 +801,28 @@ def command_agent_stop(args: argparse.Namespace) -> int:
         encoding="utf-8",
         errors="replace",
     )
-    if result.returncode != 0:
-        raise SystemExit((result.stderr or result.stdout).strip())
-    append_log(cli_home(), f"stopped Windows scheduled task: {args.task_name}")
-    print(f"Stopped agent task: {args.task_name}")
+    if result.returncode == 0:
+        append_log(home, f"stopped Windows scheduled task: {args.task_name}")
+        print(f"Stopped agent task: {args.task_name}")
+        return 0
+
+    state = read_json(agent_state_path(home), {})
+    pid = state.get("pid")
+    if not pid:
+        print("No running detached agent pid was found.")
+        return 0
+
+    kill = subprocess.run(
+        ["taskkill", "/PID", str(pid), "/F"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if kill.returncode != 0:
+        raise SystemExit((kill.stderr or kill.stdout).strip())
+    append_log(home, f"stopped detached agent pid={pid}")
+    print(f"Stopped detached agent process: pid={pid}")
     return 0
 
 
@@ -740,9 +850,11 @@ def command_agent_status(args: argparse.Namespace) -> int:
     )
     if result.returncode != 0:
         print(f"Windows task: not installed ({args.task_name})")
-        return 0
+    else:
+        print(result.stdout.strip())
 
-    print(result.stdout.strip())
+    script_path = windows_startup_script_path()
+    print(f"Startup script: {'installed' if script_path.exists() else 'not installed'} ({script_path})")
     return 0
 
 
@@ -854,6 +966,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_install.add_argument("--interval", type=int, default=DEFAULT_AGENT_INTERVAL_SECONDS)
     agent_install.add_argument("--limit", type=int, default=50)
     agent_install.add_argument("--task-name", default=WINDOWS_AGENT_TASK_NAME)
+    agent_install.add_argument("--method", choices=["auto", "task", "startup"], default="auto")
     agent_install.add_argument("--console", action="store_true", help="Use python.exe instead of pythonw.exe for the scheduled task.")
     agent_install.set_defaults(func=command_agent_install)
 
