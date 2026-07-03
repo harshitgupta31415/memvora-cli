@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-memory-cli"
+version = "0.1.0"
+description = "Python CLI for AI Memory terminal capture and offline sync."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "AI Memory" }]
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["ai", "memory", "cli", "terminal", "rag", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development",
+  "Topic :: Terminals",
+]
+dependencies = []
+
+[project.scripts]
+ai-memory = "ai_memory_cli.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
