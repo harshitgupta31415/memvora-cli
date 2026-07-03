@@ -31,6 +31,10 @@ python -m ai_memory_cli workspace connect --path . --repo owner/repo --editor vs
 watch
 ```
 
+The `auth` command verifies the website-issued token with FastAPI before it is saved locally. After verification,
+the CLI stores a SHA-512 user hash for this computer, binds the token to that hash on the server, and starts the
+background sync agent once on Windows.
+
 `watch` is a shortcut for `python -m ai_memory_cli watch`. If Windows Device Guard blocks the generated launcher, keep using `python -m ai_memory_cli watch`.
 On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.
 
@@ -42,12 +46,13 @@ Inside `watch`, type the real command you want to capture, for example `python -
 
 ## Background agent
 
-The background agent starts at Windows logon and keeps syncing queued terminal hashes whenever the API is reachable:
+After `auth`, the background agent starts once and is installed in the Windows Startup folder so queued terminal
+hashes keep syncing whenever the API is reachable. Use these commands when you need manual control:
 
 ```powershell
-python -m ai_memory_cli agent install
-python -m ai_memory_cli agent start
 python -m ai_memory_cli agent status
+python -m ai_memory_cli agent stop
+python -m ai_memory_cli agent start
 ```
 
 The agent does not secretly capture every terminal on the computer. Commands are captured when they run through:

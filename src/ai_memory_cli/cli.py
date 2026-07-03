@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -50,6 +52,12 @@ def sha256_text(value: str) -> str:
     import hashlib
 
     return hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+
+
+def sha512_text(value: str) -> str:
+    import hashlib
+
+    return hashlib.sha512(value.encode("utf-8", errors="replace")).hexdigest()
 
 
 def cli_home() -> Path:
@@ -126,6 +134,46 @@ def save_config(home: Path, config: dict[str, Any]) -> None:
     write_json(config_path(home), config)
 
 
+def ensure_local_identity(home: Path, config: dict[str, Any]) -> str:
+    secret = str(config.get("local_identity_secret") or "").strip()
+    if not secret:
+        secret = secrets.token_urlsafe(96)
+        config["local_identity_secret"] = secret
+        config["local_identity_created_at"] = utc_now()
+
+    local_user_hash = sha512_text(
+        "\0".join(
+            [
+                secret,
+                str(home),
+                platform.node() or "unknown-host",
+                getpass.getuser() or "unknown-user",
+                platform.system(),
+            ]
+        )
+    )
+    config["local_user_hash"] = local_user_hash
+    return local_user_hash
+
+
+def client_identity(home: Path, config: dict[str, Any]) -> dict[str, Any]:
+    local_user_hash = ensure_local_identity(home, config)
+    return {
+        "name": "ai-memory-cli",
+        "version": __version__,
+        "local_user_hash": local_user_hash,
+        "user_hash": config.get("user_hash") or "",
+        "github_user": config.get("github_user") or "",
+        "session_id": config.get("session_id") or "",
+        "storage_home_hash": sha256_text(str(home)),
+        "hostname_hash": sha256_text(platform.node() or "unknown"),
+        "username_hash": sha256_text(getpass.getuser() or "unknown"),
+        "platform": platform.system(),
+        "python": platform.python_version(),
+        "auth_verified_at": config.get("auth_verified_at") or "",
+    }
+
+
 def agent_state_path(home: Path) -> Path:
     return home / "agent.json"
 
@@ -198,6 +246,63 @@ def start_detached_agent(interval: int, limit: int) -> int:
         creationflags=creationflags,
     )
     return int(process.pid)
+
+
+def is_process_running(pid: Any) -> bool:
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid_int <= 0:
+        return False
+
+    if os.name == "nt":
+        result = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid_int}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return result.returncode == 0 and str(pid_int) in result.stdout
+
+    try:
+        os.kill(pid_int, 0)
+        return True
+    except OSError:
+        return False
+
+
+def ensure_agent_started_once(home: Path, config: dict[str, Any]) -> None:
+    agent_config = config.get("agent") if isinstance(config.get("agent"), dict) else {}
+    interval = int(agent_config.get("interval_seconds") or DEFAULT_AGENT_INTERVAL_SECONDS)
+    limit = int(agent_config.get("limit") or 50)
+    state = read_json(agent_state_path(home), {})
+
+    if is_process_running(state.get("pid")):
+        print(f"AI Memory sync agent already running: pid={state.get('pid')}")
+        return
+
+    if os.name == "nt":
+        script_path = write_windows_startup_script(interval, limit)
+        pid = start_detached_agent(interval, limit)
+        config["agent"] = {
+            **agent_config,
+            "method": "startup",
+            "interval_seconds": interval,
+            "limit": limit,
+            "startup_script": str(script_path),
+            "last_started_pid": pid,
+            "last_started_at": utc_now(),
+        }
+        save_config(home, config)
+        append_log(home, f"auth started detached agent pid={pid}")
+        print(f"AI Memory sync agent started once: pid={pid}")
+        print(f"Startup sync installed at: {script_path}")
+        return
+
+    print("Automatic startup agent install is only implemented for Windows.")
+    print("Start sync manually with: python -m ai_memory_cli agent run")
 
 
 def normalize_command(command: str) -> str:
@@ -281,6 +386,58 @@ def http_json(
     if not response_body:
         return {}
     return json.loads(response_body)
+
+
+def describe_http_error(exc: urllib.error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace")
+        payload = json.loads(body) if body else {}
+        detail = payload.get("detail") if isinstance(payload, dict) else None
+        if detail:
+            return str(detail)
+        if body:
+            return body[:500]
+    except Exception:
+        pass
+    return f"HTTP {exc.code} {exc.reason}"
+
+
+def verify_cli_auth(home: Path, config: dict[str, Any], token: str) -> dict[str, Any]:
+    identity = client_identity(home, config)
+    response = http_json(
+        "POST",
+        f"{api_url(config)}/cli/auth/verify",
+        {"client": identity},
+        token,
+    )
+    if not response.get("verified"):
+        raise RuntimeError("CLI token was not verified by the backend.")
+
+    config["token"] = token
+    config["token_hash"] = sha256_text(token)
+    config["token_tail"] = response.get("token_tail") or ""
+    config["session_id"] = response.get("session_id") or ""
+    config["github_user"] = response.get("github_user") or response.get("github_account_name") or ""
+    config["user_hash"] = response.get("user_hash") or ""
+    config["bound_local_user_hash"] = response.get("bound_local_user_hash") or identity["local_user_hash"]
+    config["auth_verified_at"] = response.get("verified_at") or utc_now()
+    config["server_account_storage_dir"] = response.get("account_storage_dir") or ""
+    return response
+
+
+def require_verified_auth(home: Path, config: dict[str, Any]) -> str:
+    token = require_token(config)
+    if config.get("auth_verified_at") and config.get("user_hash") and config.get("local_user_hash"):
+        return token
+
+    try:
+        verify_cli_auth(home, config, token)
+        save_config(home, config)
+        return token
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(f"CLI auth is not verified: {describe_http_error(exc)}") from exc
+    except Exception as exc:
+        raise SystemExit(f"CLI auth is not verified. Run website auth again when the local server is available: {exc}") from exc
 
 
 def make_terminal_event(
@@ -388,6 +545,14 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
         if not quiet:
             print("No CLI token saved. Events remain queued until python -m ai_memory_cli auth is configured.")
         return 0
+    if not (config.get("auth_verified_at") and config.get("user_hash")):
+        try:
+            verify_cli_auth(home, config, token)
+            save_config(home, config)
+        except Exception as exc:
+            if not quiet:
+                print(f"CLI auth is not verified yet. Events remain queued: {exc}")
+            return 0
     paths = sorted((home / "outbox").glob("*.json"))[:limit]
     if not paths:
         if not quiet:
@@ -401,12 +566,7 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
 
     payload = {
         "events": events,
-        "client": {
-            "name": "ai-memory-cli",
-            "version": __version__,
-            "storage_home_hash": sha256_text(str(home)),
-            "hostname_hash": sha256_text(platform.node() or "unknown"),
-        },
+        "client": client_identity(home, config),
     }
     response = http_json("POST", f"{api_url(config)}/cli/events/terminal", payload, token)
     accepted = {item.get("event_hash") for item in response.get("events", []) if item.get("event_hash")}
@@ -421,6 +581,7 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
 
 
 def capture_command(home: Path, config: dict[str, Any], command: str, include_excluded: bool, source: str) -> int:
+    require_verified_auth(home, config)
     workspace = Path(str(config.get("workspace_path") or ".")).expanduser()
     cwd = workspace if workspace.exists() else Path.cwd()
 
@@ -498,17 +659,33 @@ def command_auth(args: argparse.Namespace) -> int:
     config = load_config(home)
     if args.api_url:
         config["api_url"] = args.api_url.rstrip("/")
-    config["token"] = args.token.strip()
-    config["token_hash"] = sha256_text(args.token.strip())
+
+    token = args.token.strip()
+    config["pending_token_hash"] = sha256_text(token)
+    try:
+        response = verify_cli_auth(home, config, token)
+    except urllib.error.HTTPError as exc:
+        save_config(home, config)
+        raise SystemExit(f"CLI auth failed: {describe_http_error(exc)}") from exc
+    except Exception as exc:
+        save_config(home, config)
+        raise SystemExit(f"CLI auth failed. Keep the local FastAPI server running and generate a fresh website token: {exc}") from exc
+
     config["authed_at"] = utc_now()
     save_config(home, config)
     print(f"Saved CLI auth in {config_path(home)}")
+    print(f"GitHub account: {response.get('github_user') or config.get('github_user') or '-'}")
+    print(f"Local user hash: {str(config.get('user_hash') or '')[:24]}...")
+    if response.get("account_storage_dir"):
+        print(f"Server account storage: {response['account_storage_dir']}")
+
+    if not args.no_agent:
+        ensure_agent_started_once(home, config)
 
     try:
-        health = http_json("GET", f"{api_url(config)}/health", None, None)
-        print(f"Connected to API: {health.get('service', api_url(config))}")
+        sync_events(home, config, quiet=True)
     except Exception as exc:
-        print(f"Auth saved. API check failed, sync will retry later: {exc}", file=sys.stderr)
+        print(f"Auth saved. Sync will retry later: {exc}", file=sys.stderr)
     return 0
 
 
@@ -525,7 +702,7 @@ def command_init(args: argparse.Namespace) -> int:
         config["workspace_path"] = args.workspace
     save_config(home, config)
 
-    token = require_token(config)
+    token = require_verified_auth(home, config)
     payload = {
         "project": config.get("project") or "memory-project",
         "repository": config.get("repository") or "",
@@ -538,7 +715,7 @@ def command_init(args: argparse.Namespace) -> int:
         print(f"Initialized project: {project.get('id', payload['project'])}")
     except Exception as exc:
         print(f"Project config saved locally. Server init will need retry: {exc}", file=sys.stderr)
-    print("Start terminal capture with: python -m ai_memory_cli watch")
+    print("Start terminal capture with: watch")
     return 0
 
 
@@ -551,7 +728,8 @@ def command_workspace_connect(args: argparse.Namespace) -> int:
         config["repository"] = args.repo
     save_config(home, config)
 
-    token = require_token(config)
+    token = require_verified_auth(home, config)
+    identity = client_identity(home, config)
     payload = {
         "payload": {
             "source": "ai-memory-cli",
@@ -561,6 +739,9 @@ def command_workspace_connect(args: argparse.Namespace) -> int:
             "editor": args.editor,
             "package_manager": args.package_manager,
             "cli_storage_home_hash": sha256_text(str(home)),
+            "local_user_hash": identity["local_user_hash"],
+            "user_hash": identity["user_hash"],
+            "github_user": identity["github_user"],
         }
     }
     response = http_json("POST", f"{api_url(config)}/workspace/connect", payload, token)
@@ -572,7 +753,8 @@ def command_workspace_connect(args: argparse.Namespace) -> int:
 def command_mcp_connect(args: argparse.Namespace) -> int:
     home = cli_home()
     config = load_config(home)
-    token = require_token(config)
+    token = require_verified_auth(home, config)
+    identity = client_identity(home, config)
     config["mcp_server"] = args.server
     save_config(home, config)
     payload = {
@@ -582,6 +764,9 @@ def command_mcp_connect(args: argparse.Namespace) -> int:
             "project": config.get("project") or "",
             "repository": config.get("repository") or "",
             "cli_storage_home_hash": sha256_text(str(home)),
+            "local_user_hash": identity["local_user_hash"],
+            "user_hash": identity["user_hash"],
+            "github_user": identity["github_user"],
         }
     }
     response = http_json("POST", f"{api_url(config)}/mcp/connect", payload, token)
@@ -593,7 +778,8 @@ def command_mcp_connect(args: argparse.Namespace) -> int:
 def command_chat_connect(args: argparse.Namespace) -> int:
     home = cli_home()
     config = load_config(home)
-    token = require_token(config)
+    token = require_verified_auth(home, config)
+    identity = client_identity(home, config)
     config["chat_provider"] = args.provider
     save_config(home, config)
     payload = {
@@ -603,6 +789,9 @@ def command_chat_connect(args: argparse.Namespace) -> int:
             "project": config.get("project") or "",
             "repository": config.get("repository") or "",
             "cli_storage_home_hash": sha256_text(str(home)),
+            "local_user_hash": identity["local_user_hash"],
+            "user_hash": identity["user_hash"],
+            "github_user": identity["github_user"],
         }
     }
     response = http_json("POST", f"{api_url(config)}/chat/connect", payload, token)
@@ -648,6 +837,7 @@ def command_watch(args: argparse.Namespace) -> int:
 def command_history_import(args: argparse.Namespace) -> int:
     home = cli_home()
     config = load_config(home)
+    require_verified_auth(home, config)
     history_path = Path(args.path).expanduser() if args.path else detect_history_file()
     if not history_path or not history_path.exists():
         raise SystemExit("No shell history file found. Pass --path <history-file>.")
@@ -823,6 +1013,11 @@ def command_agent_start(args: argparse.Namespace) -> int:
 
     home = cli_home()
     config = load_config(home)
+    state = read_json(agent_state_path(home), {})
+    if is_process_running(state.get("pid")):
+        print(f"Agent already running: pid={state.get('pid')}")
+        return 0
+
     result = subprocess.run(
         ["schtasks", "/Run", "/TN", args.task_name],
         capture_output=True,
@@ -925,7 +1120,9 @@ def command_status(_: argparse.Namespace) -> int:
     print(f"Project: {config.get('project') or '-'}")
     print(f"Repository: {config.get('repository') or '-'}")
     print(f"Workspace: {config.get('workspace_path') or '.'}")
-    print(f"Token: {'saved' if config.get('token') else 'missing'}")
+    print(f"Token: {'verified' if config.get('auth_verified_at') and config.get('user_hash') else 'saved' if config.get('token') else 'missing'}")
+    print(f"GitHub account: {config.get('github_user') or '-'}")
+    print(f"User hash: {str(config.get('user_hash') or '-')[:24]}{'...' if config.get('user_hash') else ''}")
     print(f"Events: {event_count} total, {outbox_count} queued, {sent_count} synced receipts")
     return 0
 
@@ -955,6 +1152,7 @@ def build_parser() -> argparse.ArgumentParser:
     auth = subparsers.add_parser("auth", help="Save the app-issued CLI token.")
     auth.add_argument("--token", required=True, help="Token generated by the website.")
     auth.add_argument("--api-url", default=DEFAULT_API_URL, help="FastAPI base URL.")
+    auth.add_argument("--no-agent", action="store_true", help="Do not auto-start the background sync agent after auth.")
     auth.set_defaults(func=command_auth)
 
     init = subparsers.add_parser("init", help="Save project config and call /projects/init.")
