@@ -28,8 +28,10 @@ python -m pip install -e .
 python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
 python -m ai_memory_cli init --project my-project --repo owner/repo --workspace .
 python -m ai_memory_cli workspace connect --path . --repo owner/repo --editor vscode --package-manager pip
-python -m ai_memory_cli watch
+watch
 ```
+
+`watch` is a shortcut for `python -m ai_memory_cli watch`. If Windows Device Guard blocks the generated launcher, keep using `python -m ai_memory_cli watch`.
 
 Use `python -m ai_memory_cli run -- COMMAND` when you only want to record one command.
 
@@ -71,6 +73,15 @@ The CLI stores config and unsynced events in a separate folder:
 - macOS/Linux: `~/.ai-memory-cli`
 
 Set `AI_MEMORY_CLI_HOME` to override this location.
+
+Accepted command observations are also written as plain daily hash logs:
+
+- Windows: `%USERPROFILE%\.ai-memory-cli\history\YYYY-MM-DD.log`
+- macOS/Linux: `~/.ai-memory-cli/history/YYYY-MM-DD.log`
+
+These files include time/date, event hash, command hash, output hash, source, exit code, and working-folder name. They do not store raw command text or raw output.
+
+If a command is clearly invalid, such as a pasted prompt (`ai-memory> python --version`) or a shell "not recognized" error, the CLI skips storing it as an event.
 
 ## Privacy and dedupe
 

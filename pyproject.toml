@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-memory-cli"
-version = "0.1.3"
+version = "0.1.4"
 description = "Python CLI for AI Memory terminal capture and offline sync."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,6 +28,7 @@ dependencies = []
 
 [project.scripts]
 ai-memory = "ai_memory_cli.cli:main"
+watch = "ai_memory_cli.cli:watch_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

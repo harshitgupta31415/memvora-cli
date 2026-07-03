@@ -32,6 +32,14 @@ DEFAULT_EXCLUDES = [
     r"uvicorn\b.*\s--reload(\s|$)",
     r"python(\.exe)?\s+-m\s+uvicorn\b.*\s--reload(\s|$)",
 ]
+SHELL_NOT_FOUND_PATTERNS = [
+    "is not recognized as an internal or external command",
+    "is not recognized as the name of a cmdlet",
+    "the system cannot find the file specified",
+    "the syntax of the command is incorrect",
+    "no such file or directory",
+    "command not found",
+]
 
 
 def utc_now() -> str:
@@ -52,7 +60,7 @@ def cli_home() -> Path:
 
 
 def ensure_dirs(home: Path) -> None:
-    for folder in ["events", "outbox", "sent", "logs"]:
+    for folder in ["events", "outbox", "sent", "logs", "history"]:
         (home / folder).mkdir(parents=True, exist_ok=True)
 
 
@@ -77,6 +85,25 @@ def append_log(home: Path, message: str) -> None:
     log_path = home / "logs" / "agent.log"
     with log_path.open("a", encoding="utf-8") as file:
         file.write(f"{utc_now()} {message}\n")
+
+
+def append_history(home: Path, event: dict[str, Any], state: str) -> None:
+    ensure_dirs(home)
+    timestamp = str(event.get("observed_at") or event.get("ended_at") or utc_now())
+    day = timestamp[:10] if len(timestamp) >= 10 else utc_now()[:10]
+    history_path = home / "history" / f"{day}.log"
+    fields = [
+        timestamp,
+        f"state={state}",
+        f"source={event.get('source', '-')}",
+        f"exit={event.get('exit_code', '-')}",
+        f"event={str(event.get('event_hash', ''))[:12]}",
+        f"command_hash={event.get('command_hash', '-')}",
+        f"output_hash={event.get('output_hash', '-')}",
+        f"cwd={event.get('metadata', {}).get('cwd_tail', '-')}",
+    ]
+    with history_path.open("a", encoding="utf-8") as file:
+        file.write(" ".join(fields) + "\n")
 
 
 def config_path(home: Path) -> Path:
@@ -177,6 +204,14 @@ def normalize_command(command: str) -> str:
     return " ".join(command.strip().split())
 
 
+def clean_watch_command(command: str) -> str:
+    cleaned = command.strip()
+    while cleaned.lower().startswith("ai-memory>"):
+        cleaned = cleaned[len("ai-memory>") :].strip()
+    cleaned = re.sub(r"^[A-Za-z]:\\[^>]*>\s*", "", cleaned).strip()
+    return cleaned
+
+
 def normalize_output(stdout: str, stderr: str) -> str:
     combined = f"stdout:\n{stdout}\nstderr:\n{stderr}"
     lines = [line.rstrip() for line in combined.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
@@ -204,6 +239,13 @@ def command_line(parts: list[str]) -> str:
 def is_excluded(command: str, config: dict[str, Any]) -> bool:
     patterns = config.get("exclude_patterns") or DEFAULT_EXCLUDES
     return any(re.search(pattern, command, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def is_shell_not_found(stdout: str, stderr: str, exit_code: int | None) -> bool:
+    if exit_code in (None, 0):
+        return False
+    combined = f"{stdout}\n{stderr}".lower()
+    return any(pattern in combined for pattern in SHELL_NOT_FOUND_PATTERNS)
 
 
 def api_url(config: dict[str, Any]) -> str:
@@ -405,6 +447,10 @@ def capture_command(home: Path, config: dict[str, Any], command: str, include_ex
     if completed.stderr:
         print(completed.stderr, end="", file=sys.stderr)
 
+    if is_shell_not_found(completed.stdout or "", completed.stderr or "", completed.returncode):
+        print("ai-memory: skipped invalid command; nothing was stored.")
+        return completed.returncode
+
     event = make_terminal_event(
         command=command,
         stdout=completed.stdout or "",
@@ -419,6 +465,7 @@ def capture_command(home: Path, config: dict[str, Any], command: str, include_ex
     )
     created, event_path = store_event(home, event)
     state = "stored" if created else "deduped"
+    append_history(home, event, state)
     print(f"ai-memory: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
 
     try:
@@ -585,6 +632,13 @@ def command_watch(args: argparse.Namespace) -> int:
             break
         if not command:
             continue
+        cleaned_command = clean_watch_command(command)
+        if cleaned_command != command:
+            if not cleaned_command:
+                print("ai-memory: skipped pasted prompt without a command.")
+                continue
+            print(f"ai-memory: using command without pasted prompt: {cleaned_command}")
+            command = cleaned_command
         if command.lower() in {"exit", "quit"}:
             break
         capture_command(home, config, command, args.include_excluded, "watch")
@@ -1000,6 +1054,18 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        return 130
+
+
+def watch_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="watch", description="Start AI Memory terminal capture.")
+    parser.add_argument("--include-excluded", action="store_true")
+    parser.add_argument("--version", action="version", version=f"ai-memory {__version__}")
+    args = parser.parse_args(argv)
+    try:
+        return command_watch(args)
     except KeyboardInterrupt:
         print("Interrupted.", file=sys.stderr)
         return 130
