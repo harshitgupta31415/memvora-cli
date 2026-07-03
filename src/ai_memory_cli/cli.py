@@ -70,7 +70,7 @@ def cli_home() -> Path:
 
 
 def ensure_dirs(home: Path) -> None:
-    for folder in ["events", "outbox", "sent", "logs", "history"]:
+    for folder in ["events", "outbox", "sent", "logs", "history", "dictionary"]:
         (home / folder).mkdir(parents=True, exist_ok=True)
 
 
@@ -114,6 +114,114 @@ def append_history(home: Path, event: dict[str, Any], state: str) -> None:
     ]
     with history_path.open("a", encoding="utf-8") as file:
         file.write(" ".join(fields) + "\n")
+
+
+def terminal_dictionary_path(home: Path) -> Path:
+    return home / "dictionary" / "terminal-dictionary.json"
+
+
+def make_terminal_dictionary_record(
+    event: dict[str, Any],
+    command: str,
+    stdout: str,
+    stderr: str,
+    cwd: Path,
+) -> dict[str, Any]:
+    return {
+        "event_hash": event["event_hash"],
+        "command_hash": event["command_hash"],
+        "output_hash": event["output_hash"],
+        "command": command,
+        "stdout": stdout,
+        "stderr": stderr,
+        "exit_code": event.get("exit_code"),
+        "cwd": str(cwd.resolve()),
+        "cwd_hash": event.get("cwd_hash"),
+        "cwd_tail": event.get("metadata", {}).get("cwd_tail"),
+        "started_at": event.get("started_at"),
+        "ended_at": event.get("ended_at"),
+        "observed_at": event.get("observed_at"),
+        "source": event.get("source"),
+        "project": event.get("project"),
+        "repository": event.get("repository"),
+        "metadata": event.get("metadata", {}),
+    }
+
+
+def store_terminal_dictionary(home: Path, record: dict[str, Any]) -> Path:
+    ensure_dirs(home)
+    path = terminal_dictionary_path(home)
+    now = utc_now()
+    dictionary = read_json(
+        path,
+        {
+            "version": 1,
+            "kind": "ai-memory-cli-terminal-dictionary",
+            "created_at": now,
+            "updated_at": now,
+            "commands": {},
+            "outputs": {},
+            "events": {},
+        },
+    )
+    dictionary.setdefault("commands", {})
+    dictionary.setdefault("outputs", {})
+    dictionary.setdefault("events", {})
+    dictionary["updated_at"] = now
+
+    command_hash = str(record.get("command_hash") or "")
+    output_hash = str(record.get("output_hash") or "")
+    event_hash = str(record.get("event_hash") or "")
+
+    if command_hash:
+        command_record = dictionary["commands"].get(command_hash, {})
+        dictionary["commands"][command_hash] = {
+            "command_hash": command_hash,
+            "command": str(record.get("command") or ""),
+            "command_length": len(str(record.get("command") or "")),
+            "first_seen_at": command_record.get("first_seen_at") or record.get("observed_at") or now,
+            "last_seen_at": record.get("observed_at") or now,
+            "observed_count": int(command_record.get("observed_count", 0)) + 1,
+        }
+
+    if output_hash:
+        output_record = dictionary["outputs"].get(output_hash, {})
+        stdout = str(record.get("stdout") or "")
+        stderr = str(record.get("stderr") or "")
+        dictionary["outputs"][output_hash] = {
+            "output_hash": output_hash,
+            "stdout": stdout,
+            "stderr": stderr,
+            "stdout_bytes": len(stdout.encode("utf-8", errors="replace")),
+            "stderr_bytes": len(stderr.encode("utf-8", errors="replace")),
+            "first_seen_at": output_record.get("first_seen_at") or record.get("observed_at") or now,
+            "last_seen_at": record.get("observed_at") or now,
+            "observed_count": int(output_record.get("observed_count", 0)) + 1,
+        }
+
+    if event_hash:
+        event_record = dictionary["events"].get(event_hash, {})
+        dictionary["events"][event_hash] = {
+            **record,
+            "first_seen_at": event_record.get("first_seen_at") or record.get("observed_at") or now,
+            "last_seen_at": record.get("observed_at") or now,
+            "observed_count": int(event_record.get("observed_count", 0)) + 1,
+        }
+
+    write_json(path, dictionary)
+    return path
+
+
+def dictionary_records_for_events(home: Path, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    dictionary = read_json(terminal_dictionary_path(home), {})
+    stored_events = dictionary.get("events") if isinstance(dictionary.get("events"), dict) else {}
+    records: list[dict[str, Any]] = []
+    for event in events:
+        event_hash = str(event.get("event_hash") or "")
+        record = stored_events.get(event_hash)
+        if isinstance(record, dict):
+            records.append(record)
+    return records
 
 
 def config_path(home: Path) -> Path:
@@ -726,9 +834,11 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
     if not events:
         return 0
 
+    terminal_dictionary = dictionary_records_for_events(home, events)
     payload = {
         "events": events,
         "client": client_identity(home, config),
+        "payload": {"terminal_dictionary": terminal_dictionary},
     }
     response = http_json("POST", f"{api_url(config)}/cli/events/terminal", payload, token)
     accepted = {item.get("event_hash") for item in response.get("events", []) if item.get("event_hash")}
@@ -770,10 +880,15 @@ def store_captured_event(
     )
     if extra_metadata:
         event["metadata"].update(extra_metadata)
+    dictionary_path = store_terminal_dictionary(
+        home,
+        make_terminal_dictionary_record(event, command, stdout, stderr, cwd),
+    )
     created, event_path = store_event(home, event)
     state = "stored" if created else "deduped"
     append_history(home, event, state)
     print(f"ai-memory: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
+    print(f"ai-memory: dictionary updated at {dictionary_path}")
 
     try:
         sync_events(home, config, quiet=True)

@@ -91,18 +91,38 @@ Accepted command observations are also written as plain daily hash logs:
 - Windows: `%USERPROFILE%\.ai-memory-cli\history\YYYY-MM-DD.log`
 - macOS/Linux: `~/.ai-memory-cli/history/YYYY-MM-DD.log`
 
-These files include time/date, event hash, command hash, output hash, source, exit code, and working-folder name. They do not store raw command text or raw output.
+These files include time/date, event hash, command hash, output hash, source, exit code, and working-folder name.
+
+The readable command/output mapping is stored locally in:
+
+- Windows: `%USERPROFILE%\.ai-memory-cli\dictionary\terminal-dictionary.json`
+- macOS/Linux: `~/.ai-memory-cli/dictionary/terminal-dictionary.json`
+
+When synced, FastAPI also stores that mapping in:
+
+```text
+local-storage/cli/<github-account>/<user-hash-prefix>/terminal-dictionary.json
+```
+
+Use this dictionary to map `command_hash`, `output_hash`, or `event_hash` back to the command text and captured output.
 
 If a command is clearly invalid, such as a pasted prompt (`ai-memory> python --version`) or a shell "not recognized" error, the CLI skips storing it as an event.
 
-## Privacy and dedupe
+## Storage, meaning, and dedupe
 
-The CLI does not send raw commands or raw output to the backend. It sends:
+The CLI stores two related records:
 
-- `command_hash`
-- `output_hash`
-- `event_hash`
-- timestamps, exit code, shell, project, repo, and local metadata
+- hash event files in `events/`, `outbox/`, `sent/`, and backend `terminal-events/`
+- readable mapping in `terminal-dictionary.json`
+
+The dictionary contains:
+
+- `commands[command_hash].command`
+- `outputs[output_hash].stdout`
+- `outputs[output_hash].stderr`
+- `events[event_hash].command`
+- `events[event_hash].stdout`
+- `events[event_hash].stderr`
 
 If the same command produces the same output again, the CLI keeps one event hash and increments `duplicate_count`.
 
