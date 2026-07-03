@@ -130,7 +130,7 @@ def api_url(config: dict[str, Any]) -> str:
 def require_token(config: dict[str, Any]) -> str:
     token = str(config.get("token") or "").strip()
     if not token:
-        raise SystemExit("Run ai-memory auth --token <app-issued-cli-token> first.")
+        raise SystemExit("Run python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE first.")
     return token
 
 
@@ -261,7 +261,7 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
     token = str(config.get("token") or "").strip()
     if not token:
         if not quiet:
-            print("No CLI token saved. Events remain queued until ai-memory auth is configured.")
+            print("No CLI token saved. Events remain queued until python -m ai_memory_cli auth is configured.")
         return 0
     paths = sorted((home / "outbox").glob("*.json"))[:limit]
     if not paths:
@@ -408,7 +408,7 @@ def command_init(args: argparse.Namespace) -> int:
         print(f"Initialized project: {project.get('id', payload['project'])}")
     except Exception as exc:
         print(f"Project config saved locally. Server init will need retry: {exc}", file=sys.stderr)
-    print("Start terminal capture with: ai-memory watch")
+    print("Start terminal capture with: python -m ai_memory_cli watch")
     return 0
 
 
@@ -484,7 +484,7 @@ def command_chat_connect(args: argparse.Namespace) -> int:
 def command_run(args: argparse.Namespace) -> int:
     command = command_line(args.command)
     if not command:
-        raise SystemExit("Pass a command after --, for example: ai-memory run -- python --version")
+        raise SystemExit("Pass a command after --, for example: python -m ai_memory_cli run -- python --version")
     home = cli_home()
     config = load_config(home)
     return capture_command(home, config, command, args.include_excluded, "run")

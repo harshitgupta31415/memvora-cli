@@ -34,7 +34,7 @@ This creates files in `dist/`.
 ```powershell
 python -m twine upload --repository testpypi dist/*
 python -m pip install --index-url https://test.pypi.org/simple/ ai-memory-cli
-ai-memory --version
+python -m ai_memory_cli --version
 ```
 
 ## 4. Publish to PyPI
@@ -55,7 +55,7 @@ After this, users can install from any PC:
 
 ```powershell
 python -m pip install ai-memory-cli
-ai-memory auth --token <app-issued-cli-token> --api-url https://api.your-domain.com
+python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
 ```
 
 ## 5. Backend requirement

@@ -25,13 +25,17 @@ python -m pip install -e .
 ## Basic flow
 
 ```powershell
-ai-memory auth --token <app-issued-cli-token> --api-url https://api.your-domain.com
-ai-memory init --project my-project --repo owner/repo --workspace .
-ai-memory workspace connect --path . --repo owner/repo --editor vscode --package-manager pip
-ai-memory watch
+python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
+python -m ai_memory_cli init --project my-project --repo owner/repo --workspace .
+python -m ai_memory_cli workspace connect --path . --repo owner/repo --editor vscode --package-manager pip
+python -m ai_memory_cli watch
 ```
 
-Use `ai-memory run -- <command>` when you only want to record one command.
+Use `python -m ai_memory_cli run -- COMMAND` when you only want to record one command.
+
+On Windows, `python -m ai_memory_cli ...` is the safest form because it avoids PATH issues and Device Guard policies that can block pip's generated `ai-memory.exe` launcher. Also avoid angle bracket placeholders in CMD because they are treated as file redirection.
+
+Inside `watch`, type the real command you want to capture, for example `python --version`. Do not type `python -m ai_memory_cli run -- ...` inside `watch`, or you will capture the nested CLI command too.
 
 ## Storage
 
