@@ -42,6 +42,7 @@ SHELL_NOT_FOUND_PATTERNS = [
     "no such file or directory",
     "command not found",
 ]
+CLEAR_COMMANDS = {"cls", "clear"}
 
 
 def utc_now() -> str:
@@ -319,6 +320,18 @@ def clean_watch_command(command: str) -> str:
         cleaned = cleaned[len("ai-memory>") :].strip()
     cleaned = re.sub(r"^[A-Za-z]:\\[^>]*>\s*", "", cleaned).strip()
     return cleaned
+
+
+def is_clear_command(command: str) -> bool:
+    return normalize_command(command).lower() in CLEAR_COMMANDS
+
+
+def clear_console() -> None:
+    command = "cls" if os.name == "nt" else "clear"
+    try:
+        subprocess.call(command, shell=True)
+    except Exception:
+        print("\033[2J\033[H", end="")
 
 
 def normalize_output(stdout: str, stderr: str) -> str:
@@ -632,6 +645,10 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
 
 
 def capture_command(home: Path, config: dict[str, Any], command: str, include_excluded: bool, source: str) -> int:
+    if is_clear_command(command):
+        clear_console()
+        return 0
+
     require_verified_auth(home, config)
     workspace = Path(str(config.get("workspace_path") or ".")).expanduser()
     cwd = workspace if workspace.exists() else Path.cwd()
@@ -868,6 +885,9 @@ def command_watch(args: argparse.Namespace) -> int:
             command = cleaned_command
         if command.lower() in {"exit", "quit"}:
             break
+        if is_clear_command(command):
+            clear_console()
+            continue
         capture_command(home, config, command, args.include_excluded, "watch")
     return 0
 

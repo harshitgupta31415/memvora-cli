@@ -46,6 +46,7 @@ Use `python -m ai_memory_cli run -- COMMAND` when you only want to record one co
 On Windows, `python -m ai_memory_cli ...` is the safest form because it avoids PATH issues and Device Guard policies that can block pip's generated `ai-memory.exe` launcher. Also avoid angle bracket placeholders in CMD because they are treated as file redirection.
 
 Inside `watch`, type the real command you want to capture, for example `python --version`. Do not type `python -m ai_memory_cli run -- ...` inside `watch`, or you will capture the nested CLI command too.
+Use `cls` on Windows or `clear` on Unix shells to clear the watch screen; those control commands are not stored or synced.
 
 ## Background agent
 
