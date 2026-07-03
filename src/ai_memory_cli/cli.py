@@ -327,6 +327,60 @@ def is_clear_command(command: str) -> bool:
     return normalize_command(command).lower() in CLEAR_COMMANDS
 
 
+def parse_cd_command(command: str) -> str | None:
+    stripped = command.strip()
+    lower = stripped.lower()
+    if lower in {"cd..", "chdir.."}:
+        return ".."
+    if os.name == "nt" and lower.startswith("cd\\"):
+        return stripped[2:].strip()
+
+    match = re.match(r"^(cd|chdir)(?:\s+(.*))?$", stripped, flags=re.IGNORECASE)
+    if not match:
+        return None
+
+    target = (match.group(2) or "").strip()
+    if os.name == "nt" and target.lower().startswith("/d"):
+        target = target[2:].strip()
+    if len(target) >= 2 and target[0] == target[-1] and target[0] in {"'", '"'}:
+        target = target[1:-1]
+    return target
+
+
+def resolve_cd_target(target: str, cwd: Path, previous_cwd: Path | None) -> tuple[Path | None, str, bool]:
+    current = cwd.resolve()
+    if not target:
+        return current, str(current) + os.linesep, False
+    if target == "-":
+        if previous_cwd:
+            return previous_cwd.resolve(), str(previous_cwd.resolve()) + os.linesep, True
+        return None, "ai-memory: no previous directory for cd -\n", True
+
+    expanded = os.path.expandvars(target)
+    if os.name == "nt" and re.fullmatch(r"[A-Za-z]:", expanded):
+        expanded = f"{expanded}\\"
+
+    candidate = Path(expanded).expanduser()
+    if not candidate.is_absolute():
+        candidate = current / candidate
+
+    try:
+        resolved = candidate.resolve(strict=False)
+    except OSError:
+        resolved = candidate
+
+    if not resolved.exists() or not resolved.is_dir():
+        if os.name == "nt":
+            return None, "The system cannot find the path specified.\n", True
+        return None, f"cd: no such file or directory: {target}\n", True
+
+    return resolved, "", True
+
+
+def watch_prompt(cwd: Path) -> str:
+    return f"ai-memory {cwd.resolve()}> "
+
+
 def is_interactive_shell_command(command: str) -> bool:
     tokens = normalize_command(command).lower().split()
     if not tokens:
@@ -688,7 +742,115 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
     return synced
 
 
-def capture_command(home: Path, config: dict[str, Any], command: str, include_excluded: bool, source: str) -> int:
+def store_captured_event(
+    home: Path,
+    config: dict[str, Any],
+    command: str,
+    stdout: str,
+    stderr: str,
+    exit_code: int | None,
+    started_at: str,
+    ended_at: str,
+    duration_ms: int,
+    cwd: Path,
+    source: str,
+    extra_metadata: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], bool, Path]:
+    event = make_terminal_event(
+        command=command,
+        stdout=stdout,
+        stderr=stderr,
+        exit_code=exit_code,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_ms=duration_ms,
+        cwd=cwd,
+        config=config,
+        source=source,
+    )
+    if extra_metadata:
+        event["metadata"].update(extra_metadata)
+    created, event_path = store_event(home, event)
+    state = "stored" if created else "deduped"
+    append_history(home, event, state)
+    print(f"ai-memory: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
+
+    try:
+        sync_events(home, config, quiet=True)
+    except Exception as exc:
+        print(f"ai-memory: sync queued until network/API is available ({exc})", file=sys.stderr)
+
+    return event, created, event_path
+
+
+def capture_cd_command(
+    home: Path,
+    config: dict[str, Any],
+    command: str,
+    cwd: Path,
+    previous_cwd: Path | None,
+    source: str,
+) -> tuple[int, Path, Path | None]:
+    require_verified_auth(home, config)
+    target = parse_cd_command(command)
+    if target is None:
+        return 1, cwd, previous_cwd
+
+    old_cwd = cwd.resolve()
+    started_at = utc_now()
+    started_monotonic = time.monotonic()
+    new_cwd, output, should_track = resolve_cd_target(target, old_cwd, previous_cwd)
+    ended_at = utc_now()
+    duration_ms = int((time.monotonic() - started_monotonic) * 1000)
+
+    if output:
+        if new_cwd is None:
+            print(output, end="", file=sys.stderr)
+        else:
+            print(output, end="")
+
+    if new_cwd is None:
+        print("ai-memory: skipped invalid cd; nothing was stored.")
+        return 1, old_cwd, previous_cwd
+
+    changed = new_cwd.resolve() != old_cwd
+    if should_track:
+        store_captured_event(
+            home=home,
+            config=config,
+            command=command,
+            stdout=output if new_cwd is not None else "",
+            stderr="",
+            exit_code=0,
+            started_at=started_at,
+            ended_at=ended_at,
+            duration_ms=duration_ms,
+            cwd=old_cwd,
+            source=source,
+            extra_metadata={
+                "builtin": "cd",
+                "cwd_changed": changed,
+                "new_cwd_hash": sha256_text(str(new_cwd.resolve())),
+                "new_cwd_tail": new_cwd.resolve().name,
+            },
+        )
+
+    return 0, new_cwd.resolve(), old_cwd if changed else previous_cwd
+
+
+def default_command_cwd(config: dict[str, Any]) -> Path:
+    workspace = Path(str(config.get("workspace_path") or ".")).expanduser()
+    return workspace.resolve() if workspace.exists() else Path.cwd().resolve()
+
+
+def capture_command(
+    home: Path,
+    config: dict[str, Any],
+    command: str,
+    include_excluded: bool,
+    source: str,
+    cwd: Path | None = None,
+) -> int:
     if is_clear_command(command):
         clear_console()
         return 0
@@ -698,16 +860,15 @@ def capture_command(home: Path, config: dict[str, Any], command: str, include_ex
         return 0
 
     require_verified_auth(home, config)
-    workspace = Path(str(config.get("workspace_path") or ".")).expanduser()
-    cwd = workspace if workspace.exists() else Path.cwd()
+    effective_cwd = cwd.resolve() if cwd else default_command_cwd(config)
 
     if is_excluded(command, config) and not include_excluded:
         print(f"ai-memory: running without capture because this command is excluded: {command}", file=sys.stderr)
-        return int(run_external_command(command, cwd, capture=False))
+        return int(run_external_command(command, effective_cwd, capture=False))
 
     started_at = utc_now()
     started_monotonic = time.monotonic()
-    completed = run_external_command(command, cwd, capture=True)
+    completed = run_external_command(command, effective_cwd, capture=True)
     if isinstance(completed, int):
         return completed
     ended_at = utc_now()
@@ -722,7 +883,9 @@ def capture_command(home: Path, config: dict[str, Any], command: str, include_ex
         print("ai-memory: skipped invalid command; nothing was stored.")
         return completed.returncode
 
-    event = make_terminal_event(
+    store_captured_event(
+        home=home,
+        config=config,
         command=command,
         stdout=completed.stdout or "",
         stderr=completed.stderr or "",
@@ -730,20 +893,9 @@ def capture_command(home: Path, config: dict[str, Any], command: str, include_ex
         started_at=started_at,
         ended_at=ended_at,
         duration_ms=duration_ms,
-        cwd=cwd,
-        config=config,
+        cwd=effective_cwd,
         source=source,
     )
-    created, event_path = store_event(home, event)
-    state = "stored" if created else "deduped"
-    append_history(home, event, state)
-    print(f"ai-memory: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
-
-    try:
-        sync_events(home, config, quiet=True)
-    except Exception as exc:
-        print(f"ai-memory: sync queued until network/API is available ({exc})", file=sys.stderr)
-
     return completed.returncode
 
 
@@ -909,10 +1061,12 @@ def command_watch(args: argparse.Namespace) -> int:
         prompt_for_auth(home, config)
         config = load_config(home)
 
+    cwd = default_command_cwd(config)
+    previous_cwd: Path | None = None
     print("AI Memory watch mode. Type commands to run and capture. Type exit to stop.")
     while True:
         try:
-            command = input("ai-memory> ").strip()
+            command = input(watch_prompt(cwd)).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -933,7 +1087,10 @@ def command_watch(args: argparse.Namespace) -> int:
         if is_interactive_shell_command(command):
             print("ai-memory: do not start a nested shell here. Type commands directly, for example: ls")
             continue
-        capture_command(home, config, command, args.include_excluded, "watch")
+        if parse_cd_command(command) is not None:
+            _, cwd, previous_cwd = capture_cd_command(home, config, command, cwd, previous_cwd, "watch")
+            continue
+        capture_command(home, config, command, args.include_excluded, "watch", cwd=cwd)
     return 0
 
 
