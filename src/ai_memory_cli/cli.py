@@ -18,6 +18,8 @@ from typing import Any
 from . import __version__
 
 DEFAULT_API_URL = "http://127.0.0.1:8000"
+WINDOWS_AGENT_TASK_NAME = "AI Memory CLI Agent"
+DEFAULT_AGENT_INTERVAL_SECONDS = 60
 DEFAULT_EXCLUDES = [
     r"^\s*npm\s+run(\s|$)",
     r"^\s*npm\s+start(\s|$)",
@@ -70,6 +72,13 @@ def write_json(path: Path, payload: Any) -> None:
     tmp_path.replace(path)
 
 
+def append_log(home: Path, message: str) -> None:
+    ensure_dirs(home)
+    log_path = home / "logs" / "agent.log"
+    with log_path.open("a", encoding="utf-8") as file:
+        file.write(f"{utc_now()} {message}\n")
+
+
 def config_path(home: Path) -> Path:
     return home / "config.json"
 
@@ -88,6 +97,19 @@ def load_config(home: Path) -> dict[str, Any]:
 def save_config(home: Path, config: dict[str, Any]) -> None:
     ensure_dirs(home)
     write_json(config_path(home), config)
+
+
+def agent_state_path(home: Path) -> Path:
+    return home / "agent.json"
+
+
+def scheduler_python_executable(background: bool = True) -> str:
+    executable = Path(sys.executable)
+    if os.name == "nt" and background:
+        pythonw = executable.with_name("pythonw.exe")
+        if pythonw.exists():
+            return str(pythonw)
+    return str(executable)
 
 
 def normalize_command(command: str) -> str:
@@ -557,6 +579,173 @@ def command_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_agent_run(args: argparse.Namespace) -> int:
+    home = cli_home()
+    ensure_dirs(home)
+    interval = max(10, int(args.interval))
+    limit = max(1, int(args.limit))
+    state = {
+        "pid": os.getpid(),
+        "version": __version__,
+        "started_at": utc_now(),
+        "interval_seconds": interval,
+        "limit": limit,
+        "mode": "once" if args.once else "loop",
+    }
+    write_json(agent_state_path(home), state)
+    append_log(home, f"agent started pid={os.getpid()} interval={interval}s limit={limit}")
+
+    try:
+        while True:
+            config = load_config(home)
+            try:
+                synced = sync_events(home, config, limit=limit, quiet=True)
+                if synced:
+                    append_log(home, f"synced {synced} terminal event(s)")
+            except Exception as exc:
+                append_log(home, f"sync failed: {exc}")
+
+            if args.once:
+                break
+            time.sleep(interval)
+    finally:
+        state["stopped_at"] = utc_now()
+        write_json(agent_state_path(home), state)
+        append_log(home, "agent stopped")
+
+    return 0
+
+
+def command_agent_install(args: argparse.Namespace) -> int:
+    if os.name != "nt":
+        raise SystemExit("agent install currently supports Windows Task Scheduler only.")
+
+    home = cli_home()
+    config = load_config(home)
+    config["agent"] = {
+        "task_name": args.task_name,
+        "interval_seconds": args.interval,
+        "limit": args.limit,
+        "installed_at": utc_now(),
+    }
+    save_config(home, config)
+
+    python_executable = scheduler_python_executable(background=not args.console)
+    task_command = (
+        f'"{python_executable}" -m ai_memory_cli agent run '
+        f"--interval {int(args.interval)} --limit {int(args.limit)}"
+    )
+    result = subprocess.run(
+        [
+            "schtasks",
+            "/Create",
+            "/TN",
+            args.task_name,
+            "/SC",
+            "ONLOGON",
+            "/TR",
+            task_command,
+            "/F",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise SystemExit((result.stderr or result.stdout).strip())
+
+    append_log(home, f"installed Windows scheduled task: {args.task_name}")
+    print(f"Installed startup agent task: {args.task_name}")
+    print("It starts when you log in. Start it now with:")
+    print("python -m ai_memory_cli agent start")
+    return 0
+
+
+def command_agent_uninstall(args: argparse.Namespace) -> int:
+    if os.name != "nt":
+        raise SystemExit("agent uninstall currently supports Windows Task Scheduler only.")
+
+    result = subprocess.run(
+        ["schtasks", "/Delete", "/TN", args.task_name, "/F"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise SystemExit((result.stderr or result.stdout).strip())
+
+    append_log(cli_home(), f"uninstalled Windows scheduled task: {args.task_name}")
+    print(f"Removed startup agent task: {args.task_name}")
+    return 0
+
+
+def command_agent_start(args: argparse.Namespace) -> int:
+    if os.name != "nt":
+        raise SystemExit("agent start currently supports Windows Task Scheduler only.")
+
+    result = subprocess.run(
+        ["schtasks", "/Run", "/TN", args.task_name],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise SystemExit((result.stderr or result.stdout).strip())
+    print(f"Started agent task: {args.task_name}")
+    return 0
+
+
+def command_agent_stop(args: argparse.Namespace) -> int:
+    if os.name != "nt":
+        raise SystemExit("agent stop currently supports Windows Task Scheduler only.")
+
+    result = subprocess.run(
+        ["schtasks", "/End", "/TN", args.task_name],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise SystemExit((result.stderr or result.stdout).strip())
+    append_log(cli_home(), f"stopped Windows scheduled task: {args.task_name}")
+    print(f"Stopped agent task: {args.task_name}")
+    return 0
+
+
+def command_agent_status(args: argparse.Namespace) -> int:
+    home = cli_home()
+    config = load_config(home)
+    state = read_json(agent_state_path(home), {})
+    print(f"Storage: {home}")
+    print(f"API: {api_url(config)}")
+    print(f"Token: {'saved' if config.get('token') else 'missing'}")
+    if state:
+        print(f"Agent state: pid={state.get('pid', '-')} started={state.get('started_at', '-')}")
+    else:
+        print("Agent state: no local agent state file yet")
+
+    if os.name != "nt":
+        return 0
+
+    result = subprocess.run(
+        ["schtasks", "/Query", "/TN", args.task_name, "/FO", "LIST", "/V"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        print(f"Windows task: not installed ({args.task_name})")
+        return 0
+
+    print(result.stdout.strip())
+    return 0
+
+
 def command_status(_: argparse.Namespace) -> int:
     home = cli_home()
     config = load_config(home)
@@ -651,6 +840,38 @@ def build_parser() -> argparse.ArgumentParser:
     sync = subparsers.add_parser("sync", help="Sync queued terminal hashes to FastAPI.")
     sync.add_argument("--limit", type=int, default=50)
     sync.set_defaults(func=command_sync)
+
+    agent = subparsers.add_parser("agent", help="Background sync agent commands.")
+    agent_subparsers = agent.add_subparsers(dest="agent_command", required=True)
+
+    agent_run = agent_subparsers.add_parser("run", help="Run the background sync loop.")
+    agent_run.add_argument("--interval", type=int, default=DEFAULT_AGENT_INTERVAL_SECONDS)
+    agent_run.add_argument("--limit", type=int, default=50)
+    agent_run.add_argument("--once", action="store_true")
+    agent_run.set_defaults(func=command_agent_run)
+
+    agent_install = agent_subparsers.add_parser("install", help="Install Windows startup task for the sync agent.")
+    agent_install.add_argument("--interval", type=int, default=DEFAULT_AGENT_INTERVAL_SECONDS)
+    agent_install.add_argument("--limit", type=int, default=50)
+    agent_install.add_argument("--task-name", default=WINDOWS_AGENT_TASK_NAME)
+    agent_install.add_argument("--console", action="store_true", help="Use python.exe instead of pythonw.exe for the scheduled task.")
+    agent_install.set_defaults(func=command_agent_install)
+
+    agent_uninstall = agent_subparsers.add_parser("uninstall", help="Remove Windows startup task for the sync agent.")
+    agent_uninstall.add_argument("--task-name", default=WINDOWS_AGENT_TASK_NAME)
+    agent_uninstall.set_defaults(func=command_agent_uninstall)
+
+    agent_start = agent_subparsers.add_parser("start", help="Start the installed Windows agent task now.")
+    agent_start.add_argument("--task-name", default=WINDOWS_AGENT_TASK_NAME)
+    agent_start.set_defaults(func=command_agent_start)
+
+    agent_stop = agent_subparsers.add_parser("stop", help="Stop the installed Windows agent task.")
+    agent_stop.add_argument("--task-name", default=WINDOWS_AGENT_TASK_NAME)
+    agent_stop.set_defaults(func=command_agent_stop)
+
+    agent_status = agent_subparsers.add_parser("status", help="Show background agent and Windows task state.")
+    agent_status.add_argument("--task-name", default=WINDOWS_AGENT_TASK_NAME)
+    agent_status.set_defaults(func=command_agent_status)
 
     status = subparsers.add_parser("status", help="Show local CLI state.")
     status.set_defaults(func=command_status)

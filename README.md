@@ -37,6 +37,32 @@ On Windows, `python -m ai_memory_cli ...` is the safest form because it avoids P
 
 Inside `watch`, type the real command you want to capture, for example `python --version`. Do not type `python -m ai_memory_cli run -- ...` inside `watch`, or you will capture the nested CLI command too.
 
+## Background agent
+
+The background agent starts at Windows logon and keeps syncing queued terminal hashes whenever the API is reachable:
+
+```powershell
+python -m ai_memory_cli agent install
+python -m ai_memory_cli agent start
+python -m ai_memory_cli agent status
+```
+
+The agent does not secretly capture every terminal on the computer. Commands are captured when they run through:
+
+```powershell
+python -m ai_memory_cli watch
+python -m ai_memory_cli run -- python --version
+```
+
+To remove the startup task:
+
+```powershell
+python -m ai_memory_cli agent stop
+python -m ai_memory_cli agent uninstall
+```
+
+Agent logs are written to `%USERPROFILE%\.ai-memory-cli\logs\agent.log`.
+
 ## Storage
 
 The CLI stores config and unsynced events in a separate folder:
