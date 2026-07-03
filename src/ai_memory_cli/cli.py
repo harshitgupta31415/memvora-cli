@@ -993,6 +993,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     watch = subparsers.add_parser("watch", help="Start a managed terminal that captures commands and output.")
     watch.add_argument("--include-excluded", action="store_true")
+    watch.add_argument("--version", action="version", version=f"ai-memory {__version__}")
     watch.set_defaults(func=command_watch)
 
     history = subparsers.add_parser("history", help="History import commands.")

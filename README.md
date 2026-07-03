@@ -32,6 +32,7 @@ watch
 ```
 
 `watch` is a shortcut for `python -m ai_memory_cli watch`. If Windows Device Guard blocks the generated launcher, keep using `python -m ai_memory_cli watch`.
+On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.
 
 Use `python -m ai_memory_cli run -- COMMAND` when you only want to record one command.
 
