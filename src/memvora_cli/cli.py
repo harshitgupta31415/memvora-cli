@@ -36,6 +36,21 @@ DEFAULT_EXCLUDES = [
     r"uvicorn\b.*\s--reload(\s|$)",
     r"python(\.exe)?\s+-m\s+uvicorn\b.*\s--reload(\s|$)",
 ]
+AUTH_CONFIG_KEYS = {
+    "token",
+    "token_hash",
+    "token_tail",
+    "pending_token_hash",
+    "session_id",
+    "github_user",
+    "github_account_name",
+    "user_hash",
+    "bound_local_user_hash",
+    "local_user_hash",
+    "auth_verified_at",
+    "authed_at",
+    "server_account_storage_dir",
+}
 SHELL_NOT_FOUND_PATTERNS = [
     "is not recognized as an internal or external command",
     "is not recognized as the name of a cmdlet",
@@ -365,6 +380,16 @@ def load_config(home: Path) -> dict[str, Any]:
 def save_config(home: Path, config: dict[str, Any]) -> None:
     ensure_dirs(home)
     write_json(config_path(home), config)
+
+
+def clear_cli_auth(home: Path, config: dict[str, Any]) -> list[str]:
+    removed = sorted(key for key in AUTH_CONFIG_KEYS if key in config)
+    for key in removed:
+        config.pop(key, None)
+    config["logged_out_at"] = utc_now()
+    save_config(home, config)
+    append_log(home, "cleared CLI auth via watch --logout")
+    return removed
 
 
 def ensure_local_identity(home: Path, config: dict[str, Any]) -> str:
@@ -1348,6 +1373,14 @@ def command_run(args: argparse.Namespace) -> int:
 def command_watch(args: argparse.Namespace) -> int:
     home = cli_home()
     config = load_config(home)
+    if getattr(args, "logout", False):
+        removed = clear_cli_auth(home, config)
+        if removed:
+            print("Memvora CLI auth cleared. A fresh website CLI token is required.")
+        else:
+            print("No saved Memvora CLI auth was found. A fresh website CLI token is required.")
+        config = load_config(home)
+
     if not has_verified_auth(config):
         prompt_for_auth(home, config)
         config = load_config(home)
@@ -1748,6 +1781,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("name", nargs="?", default="", help="Name for this watch session, for example: backend setup.")
     watch.add_argument("--name", dest="name_option", default="", help="Name for this watch session.")
     watch.add_argument("--include-excluded", action="store_true")
+    watch.add_argument("--logout", action="store_true", help="Clear saved CLI auth before starting watch and require a fresh website token.")
     watch.add_argument("--version", action="version", version=f"memvora {__version__}")
     watch.set_defaults(func=command_watch)
 
@@ -1820,6 +1854,7 @@ def watch_main(argv: list[str] | None = None) -> int:
     parser.add_argument("name", nargs="?", default="", help="Name for this watch session, for example: backend setup.")
     parser.add_argument("--name", dest="name_option", default="", help="Name for this watch session.")
     parser.add_argument("--include-excluded", action="store_true")
+    parser.add_argument("--logout", action="store_true", help="Clear saved CLI auth before starting watch and require a fresh website token.")
     parser.add_argument("--version", action="version", version=f"memvora {__version__}")
     args = parser.parse_args(argv)
     try:

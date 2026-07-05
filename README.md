@@ -41,6 +41,8 @@ If you run `watch` before auth, it will prompt for the website CLI token and Mem
 `watch` is a shortcut for `python -m memvora_cli watch`. Give it a name, such as `watch "backend setup"`, so every command until `exit` is grouped under that work session. If Windows Device Guard blocks the generated launcher, keep using `python -m memvora_cli watch "backend setup"`.
 On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.
 
+Use `watch --logout` when you want this computer to forget its saved CLI token and website session before starting capture again. It clears the auth fields in `%USERPROFILE%\.memvora\config.json`, keeps your local history/queue files, then asks for a fresh website CLI token.
+
 Use `python -m memvora_cli run -- COMMAND` when you only want to record one command.
 
 On Windows, `python -m memvora_cli ...` is the safest form because it avoids PATH issues and Device Guard policies that can block pip's generated `memvora.exe` launcher. Also avoid angle bracket placeholders in CMD because they are treated as file redirection.
