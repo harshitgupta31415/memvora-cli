@@ -25,7 +25,7 @@ python -m pip install -e .
 ## Basic flow
 
 ```powershell
-python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://memvora.vercel.app/api
+python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://memvora.onrender.com/api
 python -m memvora_cli init --project my-project --repo owner/repo --workspace .
 python -m memvora_cli workspace connect --path . --repo owner/repo --package-manager pip
 watch "backend setup"
@@ -36,7 +36,7 @@ the CLI stores a SHA-512 user hash for this computer, binds the token to that ha
 background sync agent once on Windows.
 
 If you run `watch` before auth, it will prompt for the website CLI token and Memvora API URL, defaulting to
-`https://memvora.vercel.app/api` when you press Enter, then continue into terminal capture after verification.
+`https://memvora.onrender.com/api` when you press Enter, then continue into terminal capture after verification.
 
 `watch` is a shortcut for `python -m memvora_cli watch`. Give it a name, such as `watch "backend setup"`, so every command until `exit` is grouped under that work session. If Windows Device Guard blocks the generated launcher, keep using `python -m memvora_cli watch "backend setup"`.
 On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.

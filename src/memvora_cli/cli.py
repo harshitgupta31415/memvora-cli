@@ -19,7 +19,7 @@ from typing import Any
 
 from . import __version__
 
-HOSTED_API_URL = "https://memvora.vercel.app/api"
+HOSTED_API_URL = "https://memvora.onrender.com/api"
 DEFAULT_API_URL = os.getenv("MEMVORA_DEFAULT_API_URL", HOSTED_API_URL).rstrip("/")
 LEGACY_LOCAL_API_URLS = {"http://127.0.0.1:8000", "http://localhost:8000"}
 WINDOWS_AGENT_TASK_NAME = "Memvora CLI Agent"
