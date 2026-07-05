@@ -66,7 +66,7 @@ def cli_home() -> Path:
     configured = os.getenv("MEMVORA_CLI_HOME")
     if configured:
         return Path(configured).expanduser().resolve()
-    return (Path.home() / ".memvora-cli").resolve()
+    return (Path.home() / ".memvora").resolve()
 
 
 def ensure_dirs(home: Path) -> None:
@@ -189,7 +189,7 @@ def store_terminal_dictionary(home: Path, record: dict[str, Any]) -> Path:
         path,
         {
             "version": 1,
-            "kind": "memvora-cli-terminal-dictionary",
+            "kind": "memvora-terminal-dictionary",
             "created_at": now,
             "updated_at": now,
             "commands": {},
@@ -285,7 +285,7 @@ def store_terminal_watch_session(home: Path, record: dict[str, Any]) -> Path | N
         path,
         {
             "version": 1,
-            "kind": "memvora-cli-watch-session",
+            "kind": "memvora-watch-session",
             "watch_id": watch_id,
             "watch_name": str(record.get("watch_name") or "terminal-session"),
             "watch_started_at": str(record.get("watch_started_at") or record.get("started_at") or now),
@@ -387,7 +387,7 @@ def ensure_local_identity(home: Path, config: dict[str, Any]) -> str:
 def client_identity(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     local_user_hash = ensure_local_identity(home, config)
     return {
-        "name": "memvora-cli",
+        "name": "memvora",
         "version": __version__,
         "local_user_hash": local_user_hash,
         "user_hash": config.get("user_hash") or "",
@@ -720,7 +720,7 @@ def http_json(
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {
         "Accept": "application/json",
-        "User-Agent": f"memvora-cli/{__version__}",
+        "User-Agent": f"memvora/{__version__}",
     }
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -1259,6 +1259,7 @@ def command_workspace_connect(args: argparse.Namespace) -> int:
     payload = {
         "payload": {
             "source": "memvora-cli",
+            "source": "memvora",
             "workspace_path": args.path,
             "repository": args.repo or config.get("repository") or "",
             "branch": args.branch,
@@ -1286,6 +1287,7 @@ def command_mcp_connect(args: argparse.Namespace) -> int:
     payload = {
         "payload": {
             "source": "memvora-cli",
+            "source": "memvora",
             "server": args.server,
             "project": config.get("project") or "",
             "repository": config.get("repository") or "",
@@ -1311,6 +1313,7 @@ def command_chat_connect(args: argparse.Namespace) -> int:
     payload = {
         "payload": {
             "source": "memvora-cli",
+            "source": "memvora",
             "provider": args.provider,
             "project": config.get("project") or "",
             "repository": config.get("repository") or "",
