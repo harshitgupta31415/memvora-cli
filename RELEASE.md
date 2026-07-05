@@ -1,9 +1,9 @@
-# Release the AI Memory CLI
+# Release the Memvora CLI
 
 Use this when the CLI should install on any PC with:
 
 ```powershell
-python -m pip install ai-memory-cli
+python -m pip install memvora-cli
 ```
 
 ## 1. Choose the package source
@@ -11,13 +11,13 @@ python -m pip install ai-memory-cli
 PyPI install:
 
 ```powershell
-python -m pip install ai-memory-cli
+python -m pip install memvora-cli
 ```
 
 GitHub install before PyPI:
 
 ```powershell
-python -m pip install "ai-memory-cli @ git+https://github.com/YOUR_ORG/ai-memory-cli.git"
+python -m pip install "memvora-cli @ git+https://github.com/YOUR_ORG/memvora-cli.git"
 ```
 
 ## 2. Build the package
@@ -33,8 +33,8 @@ This creates files in `dist/`.
 
 ```powershell
 python -m twine upload --repository testpypi dist/*
-python -m pip install --index-url https://test.pypi.org/simple/ ai-memory-cli
-python -m ai_memory_cli --version
+python -m pip install --index-url https://test.pypi.org/simple/ memvora-cli
+python -m memvora_cli --version
 ```
 
 ## 4. Publish to PyPI
@@ -54,8 +54,8 @@ From this CLI repo, run the helper script. It prompts for the API token locally:
 After this, users can install from any PC:
 
 ```powershell
-python -m pip install ai-memory-cli
-python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
+python -m pip install memvora-cli
+python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
 ```
 
 ## 5. Backend requirement

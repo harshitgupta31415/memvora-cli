@@ -20,7 +20,7 @@ from typing import Any
 from . import __version__
 
 DEFAULT_API_URL = "http://127.0.0.1:8000"
-WINDOWS_AGENT_TASK_NAME = "AI Memory CLI Agent"
+WINDOWS_AGENT_TASK_NAME = "Memvora CLI Agent"
 DEFAULT_AGENT_INTERVAL_SECONDS = 60
 DEFAULT_EXCLUDES = [
     r"^\s*npm\s+run(\s|$)",
@@ -63,10 +63,10 @@ def sha512_text(value: str) -> str:
 
 
 def cli_home() -> Path:
-    configured = os.getenv("AI_MEMORY_CLI_HOME")
+    configured = os.getenv("MEMVORA_CLI_HOME")
     if configured:
         return Path(configured).expanduser().resolve()
-    return (Path.home() / ".ai-memory-cli").resolve()
+    return (Path.home() / ".memvora-cli").resolve()
 
 
 def ensure_dirs(home: Path) -> None:
@@ -189,7 +189,7 @@ def store_terminal_dictionary(home: Path, record: dict[str, Any]) -> Path:
         path,
         {
             "version": 1,
-            "kind": "ai-memory-cli-terminal-dictionary",
+            "kind": "memvora-cli-terminal-dictionary",
             "created_at": now,
             "updated_at": now,
             "commands": {},
@@ -285,7 +285,7 @@ def store_terminal_watch_session(home: Path, record: dict[str, Any]) -> Path | N
         path,
         {
             "version": 1,
-            "kind": "ai-memory-cli-watch-session",
+            "kind": "memvora-cli-watch-session",
             "watch_id": watch_id,
             "watch_name": str(record.get("watch_name") or "terminal-session"),
             "watch_started_at": str(record.get("watch_started_at") or record.get("started_at") or now),
@@ -359,6 +359,11 @@ def save_config(home: Path, config: dict[str, Any]) -> None:
 
 
 def ensure_local_identity(home: Path, config: dict[str, Any]) -> str:
+    bound_hash = str(config.get("bound_local_user_hash") or "").strip()
+    if bound_hash and config.get("auth_verified_at"):
+        config["local_user_hash"] = bound_hash
+        return bound_hash
+
     secret = str(config.get("local_identity_secret") or "").strip()
     if not secret:
         secret = secrets.token_urlsafe(96)
@@ -369,7 +374,6 @@ def ensure_local_identity(home: Path, config: dict[str, Any]) -> str:
         "\0".join(
             [
                 secret,
-                str(home),
                 platform.node() or "unknown-host",
                 getpass.getuser() or "unknown-user",
                 platform.system(),
@@ -383,7 +387,7 @@ def ensure_local_identity(home: Path, config: dict[str, Any]) -> str:
 def client_identity(home: Path, config: dict[str, Any]) -> dict[str, Any]:
     local_user_hash = ensure_local_identity(home, config)
     return {
-        "name": "ai-memory-cli",
+        "name": "memvora-cli",
         "version": __version__,
         "local_user_hash": local_user_hash,
         "user_hash": config.get("user_hash") or "",
@@ -423,7 +427,7 @@ def windows_startup_dir() -> Path:
 
 
 def windows_startup_script_path() -> Path:
-    return windows_startup_dir() / "AI Memory CLI Agent.vbs"
+    return windows_startup_dir() / "Memvora CLI Agent.vbs"
 
 
 def write_windows_startup_script(interval: int, limit: int) -> Path:
@@ -431,7 +435,7 @@ def write_windows_startup_script(interval: int, limit: int) -> Path:
     startup_dir.mkdir(parents=True, exist_ok=True)
     script_path = windows_startup_script_path()
     python_executable = scheduler_python_executable(background=False)
-    command = f'"{python_executable}" -m ai_memory_cli agent run --interval {interval} --limit {limit}'
+    command = f'"{python_executable}" -m memvora_cli agent run --interval {interval} --limit {limit}'
     escaped_command = command.replace('"', '""')
     script_path.write_text(
         "\n".join(
@@ -451,7 +455,7 @@ def start_detached_agent(interval: int, limit: int) -> int:
     command = [
         python_executable,
         "-m",
-        "ai_memory_cli",
+        "memvora_cli",
         "agent",
         "run",
         "--interval",
@@ -508,7 +512,7 @@ def ensure_agent_started_once(home: Path, config: dict[str, Any]) -> None:
     state = read_json(agent_state_path(home), {})
 
     if is_process_running(state.get("pid")):
-        print(f"AI Memory sync agent already running: pid={state.get('pid')}")
+        print(f"Memvora sync agent already running: pid={state.get('pid')}")
         return
 
     if os.name == "nt":
@@ -525,12 +529,12 @@ def ensure_agent_started_once(home: Path, config: dict[str, Any]) -> None:
         }
         save_config(home, config)
         append_log(home, f"auth started detached agent pid={pid}")
-        print(f"AI Memory sync agent started once: pid={pid}")
+        print(f"Memvora sync agent started once: pid={pid}")
         print(f"Startup sync installed at: {script_path}")
         return
 
     print("Automatic startup agent install is only implemented for Windows.")
-    print("Start sync manually with: python -m ai_memory_cli agent run")
+    print("Start sync manually with: python -m memvora_cli agent run")
 
 
 def normalize_command(command: str) -> str:
@@ -539,8 +543,8 @@ def normalize_command(command: str) -> str:
 
 def clean_watch_command(command: str) -> str:
     cleaned = command.strip()
-    while cleaned.lower().startswith("ai-memory>"):
-        cleaned = cleaned[len("ai-memory>") :].strip()
+    while cleaned.lower().startswith("memvora>"):
+        cleaned = cleaned[len("memvora>") :].strip()
     cleaned = re.sub(r"^[A-Za-z]:\\[^>]*>\s*", "", cleaned).strip()
     return cleaned
 
@@ -576,7 +580,7 @@ def resolve_cd_target(target: str, cwd: Path, previous_cwd: Path | None) -> tupl
     if target == "-":
         if previous_cwd:
             return previous_cwd.resolve(), str(previous_cwd.resolve()) + os.linesep, True
-        return None, "ai-memory: no previous directory for cd -\n", True
+        return None, "memvora: no previous directory for cd -\n", True
 
     expanded = os.path.expandvars(target)
     if os.name == "nt" and re.fullmatch(r"[A-Za-z]:", expanded):
@@ -600,12 +604,12 @@ def resolve_cd_target(target: str, cwd: Path, previous_cwd: Path | None) -> tupl
 
 
 def watch_prompt(cwd: Path) -> str:
-    return f"ai-memory {cwd.resolve()}> "
+    return f"memvora {cwd.resolve()}> "
 
 
 def named_watch_prompt(cwd: Path, watch_context: dict[str, str]) -> str:
     watch_name = watch_context.get("watch_name") or "terminal-session"
-    return f"ai-memory[{watch_name}] {cwd.resolve()}> "
+    return f"memvora[{watch_name}] {cwd.resolve()}> "
 
 
 def is_interactive_shell_command(command: str) -> bool:
@@ -702,7 +706,7 @@ def api_url(config: dict[str, Any]) -> str:
 def require_token(config: dict[str, Any]) -> str:
     token = str(config.get("token") or "").strip()
     if not token:
-        raise SystemExit("Run python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE first.")
+        raise SystemExit("Run python -m memvora_cli auth --token TOKEN_FROM_WEBSITE first.")
     return token
 
 
@@ -716,7 +720,7 @@ def http_json(
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {
         "Accept": "application/json",
-        "User-Agent": f"ai-memory-cli/{__version__}",
+        "User-Agent": f"memvora-cli/{__version__}",
     }
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -793,7 +797,7 @@ def finish_auth(home: Path, config: dict[str, Any], token: str, start_agent: boo
 
 
 def prompt_for_auth(home: Path, config: dict[str, Any]) -> dict[str, Any]:
-    print("AI Memory needs website auth before watch can capture and sync.")
+    print("Memvora needs website auth before watch can capture and sync.")
     print("Generate a CLI token from the website Integrations page, then paste it here.")
     token = getpass.getpass("Website CLI token: ").strip()
     if not token:
@@ -968,7 +972,7 @@ def sync_events(home: Path, config: dict[str, Any], limit: int = 50, quiet: bool
     token = str(config.get("token") or "").strip()
     if not token:
         if not quiet:
-            print("No CLI token saved. Events remain queued until python -m ai_memory_cli auth is configured.")
+            print("No CLI token saved. Events remain queued until python -m memvora_cli auth is configured.")
         return 0
     if not has_verified_auth(config):
         try:
@@ -1043,15 +1047,15 @@ def store_captured_event(
     created, event_path = store_event(home, event)
     state = "stored" if created else "deduped"
     append_history(home, event, state)
-    print(f"ai-memory: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
-    print(f"ai-memory: dictionary updated at {dictionary_path}")
+    print(f"memvora: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
+    print(f"memvora: dictionary updated at {dictionary_path}")
     if watch_session_path:
-        print(f"ai-memory: watch session updated at {watch_session_path}")
+        print(f"memvora: watch session updated at {watch_session_path}")
 
     try:
         sync_events(home, config, quiet=True)
     except Exception as exc:
-        print(f"ai-memory: sync queued until network/API is available ({exc})", file=sys.stderr)
+        print(f"memvora: sync queued until network/API is available ({exc})", file=sys.stderr)
 
     return event, created, event_path
 
@@ -1084,7 +1088,7 @@ def capture_cd_command(
             print(output, end="")
 
     if new_cwd is None:
-        print("ai-memory: skipped invalid cd; nothing was stored.")
+        print("memvora: skipped invalid cd; nothing was stored.")
         return 1, old_cwd, previous_cwd
 
     changed = new_cwd.resolve() != old_cwd
@@ -1132,14 +1136,14 @@ def capture_command(
         return 0
 
     if is_interactive_shell_command(command):
-        print("ai-memory: watch already runs commands through a shell. Type the command directly, for example: ls")
+        print("memvora: watch already runs commands through a shell. Type the command directly, for example: ls")
         return 0
 
     require_verified_auth(home, config)
     effective_cwd = cwd.resolve() if cwd else default_command_cwd(config)
 
     if is_excluded(command, config) and not include_excluded:
-        print(f"ai-memory: running without capture because this command is excluded: {command}", file=sys.stderr)
+        print(f"memvora: running without capture because this command is excluded: {command}", file=sys.stderr)
         return int(run_external_command(command, effective_cwd, capture=False))
 
     started_at = utc_now()
@@ -1156,7 +1160,7 @@ def capture_command(
         print(completed.stderr, end="", file=sys.stderr)
 
     if is_shell_not_found(completed.stdout or "", completed.stderr or "", completed.returncode):
-        print("ai-memory: skipped invalid command; nothing was stored.")
+        print("memvora: skipped invalid command; nothing was stored.")
         return completed.returncode
 
     store_captured_event(
@@ -1254,7 +1258,7 @@ def command_workspace_connect(args: argparse.Namespace) -> int:
     identity = client_identity(home, config)
     payload = {
         "payload": {
-            "source": "ai-memory-cli",
+            "source": "memvora-cli",
             "workspace_path": args.path,
             "repository": args.repo or config.get("repository") or "",
             "branch": args.branch,
@@ -1281,7 +1285,7 @@ def command_mcp_connect(args: argparse.Namespace) -> int:
     save_config(home, config)
     payload = {
         "payload": {
-            "source": "ai-memory-cli",
+            "source": "memvora-cli",
             "server": args.server,
             "project": config.get("project") or "",
             "repository": config.get("repository") or "",
@@ -1306,7 +1310,7 @@ def command_chat_connect(args: argparse.Namespace) -> int:
     save_config(home, config)
     payload = {
         "payload": {
-            "source": "ai-memory-cli",
+            "source": "memvora-cli",
             "provider": args.provider,
             "project": config.get("project") or "",
             "repository": config.get("repository") or "",
@@ -1325,7 +1329,7 @@ def command_chat_connect(args: argparse.Namespace) -> int:
 def command_run(args: argparse.Namespace) -> int:
     command = command_line(args.command)
     if not command:
-        raise SystemExit("Pass a command after --, for example: python -m ai_memory_cli run -- python --version")
+        raise SystemExit("Pass a command after --, for example: python -m memvora_cli run -- python --version")
     home = cli_home()
     config = load_config(home)
     return capture_command(home, config, command, args.include_excluded, "run")
@@ -1344,7 +1348,7 @@ def command_watch(args: argparse.Namespace) -> int:
     if not raw_watch_name:
         raw_watch_name = input("Name this watch session: ").strip()
     watch_context = make_watch_context(raw_watch_name, cwd)
-    print(f"AI Memory watch mode: {watch_context['watch_name']}. Type commands to run and capture. Type exit to stop.")
+    print(f"Memvora watch mode: {watch_context['watch_name']}. Type commands to run and capture. Type exit to stop.")
     while True:
         try:
             command = input(named_watch_prompt(cwd, watch_context)).strip()
@@ -1356,9 +1360,9 @@ def command_watch(args: argparse.Namespace) -> int:
         cleaned_command = clean_watch_command(command)
         if cleaned_command != command:
             if not cleaned_command:
-                print("ai-memory: skipped pasted prompt without a command.")
+                print("memvora: skipped pasted prompt without a command.")
                 continue
-            print(f"ai-memory: using command without pasted prompt: {cleaned_command}")
+            print(f"memvora: using command without pasted prompt: {cleaned_command}")
             command = cleaned_command
         if command.lower() in {"exit", "quit"}:
             break
@@ -1366,7 +1370,7 @@ def command_watch(args: argparse.Namespace) -> int:
             clear_console()
             continue
         if is_interactive_shell_command(command):
-            print("ai-memory: do not start a nested shell here. Type commands directly, for example: ls")
+            print("memvora: do not start a nested shell here. Type commands directly, for example: ls")
             continue
         if parse_cd_command(command) is not None:
             _, cwd, previous_cwd = capture_cd_command(home, config, command, cwd, previous_cwd, "watch", watch_context)
@@ -1479,7 +1483,7 @@ def command_agent_install(args: argparse.Namespace) -> int:
     if args.method in {"auto", "task"}:
         python_executable = scheduler_python_executable(background=not args.console)
         task_command = (
-            f'"{python_executable}" -m ai_memory_cli agent run '
+            f'"{python_executable}" -m memvora_cli agent run '
             f"--interval {int(args.interval)} --limit {int(args.limit)}"
         )
         result = subprocess.run(
@@ -1503,7 +1507,7 @@ def command_agent_install(args: argparse.Namespace) -> int:
             append_log(home, f"installed Windows scheduled task: {args.task_name}")
             print(f"Installed startup agent task: {args.task_name}")
             print("It starts when you log in. Start it now with:")
-            print("python -m ai_memory_cli agent start")
+            print("python -m memvora_cli agent start")
             return 0
 
         if args.method == "task":
@@ -1516,7 +1520,7 @@ def command_agent_install(args: argparse.Namespace) -> int:
     append_log(home, f"installed Windows startup script: {script_path}")
     print(f"Installed startup agent script: {script_path}")
     print("It starts when you log in. Start it now with:")
-    print("python -m ai_memory_cli agent run")
+    print("python -m memvora_cli agent run")
     return 0
 
 
@@ -1655,7 +1659,7 @@ def command_status(_: argparse.Namespace) -> int:
     outbox_count = len(list((home / "outbox").glob("*.json")))
     event_count = len(list((home / "events").glob("*.json")))
     sent_count = len(list((home / "sent").glob("*.json")))
-    print(f"AI Memory CLI {__version__}")
+    print(f"Memvora CLI {__version__}")
     print(f"Storage: {home}")
     print(f"API: {api_url(config)}")
     print(f"Project: {config.get('project') or '-'}")
@@ -1686,8 +1690,8 @@ def command_doctor(_: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="ai-memory", description="AI Memory Python CLI")
-    parser.add_argument("--version", action="version", version=f"ai-memory {__version__}")
+    parser = argparse.ArgumentParser(prog="memvora", description="Memvora Python CLI")
+    parser.add_argument("--version", action="version", version=f"memvora {__version__}")
     subparsers = parser.add_subparsers(dest="command_name", required=True)
 
     auth = subparsers.add_parser("auth", help="Save the app-issued CLI token.")
@@ -1734,7 +1738,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("name", nargs="?", default="", help="Name for this watch session, for example: backend setup.")
     watch.add_argument("--name", dest="name_option", default="", help="Name for this watch session.")
     watch.add_argument("--include-excluded", action="store_true")
-    watch.add_argument("--version", action="version", version=f"ai-memory {__version__}")
+    watch.add_argument("--version", action="version", version=f"memvora {__version__}")
     watch.set_defaults(func=command_watch)
 
     history = subparsers.add_parser("history", help="History import commands.")
@@ -1802,11 +1806,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def watch_main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="watch", description="Start AI Memory terminal capture.")
+    parser = argparse.ArgumentParser(prog="watch", description="Start Memvora terminal capture.")
     parser.add_argument("name", nargs="?", default="", help="Name for this watch session, for example: backend setup.")
     parser.add_argument("--name", dest="name_option", default="", help="Name for this watch session.")
     parser.add_argument("--include-excluded", action="store_true")
-    parser.add_argument("--version", action="version", version=f"ai-memory {__version__}")
+    parser.add_argument("--version", action="version", version=f"memvora {__version__}")
     args = parser.parse_args(argv)
     try:
         return command_watch(args)

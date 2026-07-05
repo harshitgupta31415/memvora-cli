@@ -1,4 +1,4 @@
-# AI Memory CLI
+# Memvora CLI
 
 Standalone Python CLI for terminal capture, hashing, offline queueing, and sync to the temporary FastAPI backend.
 
@@ -7,13 +7,13 @@ Standalone Python CLI for terminal capture, hashing, offline queueing, and sync 
 For any user machine after the package is published:
 
 ```powershell
-python -m pip install ai-memory-cli
+python -m pip install memvora-cli
 ```
 
 Before PyPI publish, install from GitHub:
 
 ```powershell
-python -m pip install "ai-memory-cli @ git+https://github.com/YOUR_ORG/ai-memory-cli.git"
+python -m pip install "memvora-cli @ git+https://github.com/YOUR_ORG/memvora-cli.git"
 ```
 
 For local development from this CLI repo:
@@ -25,9 +25,9 @@ python -m pip install -e .
 ## Basic flow
 
 ```powershell
-python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
-python -m ai_memory_cli init --project my-project --repo owner/repo --workspace .
-python -m ai_memory_cli workspace connect --path . --repo owner/repo --package-manager pip
+python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
+python -m memvora_cli init --project my-project --repo owner/repo --workspace .
+python -m memvora_cli workspace connect --path . --repo owner/repo --package-manager pip
 watch "backend setup"
 ```
 
@@ -38,17 +38,17 @@ background sync agent once on Windows.
 If you run `watch` before auth, it will prompt for the website CLI token and FastAPI URL, then continue into
 terminal capture after verification.
 
-`watch` is a shortcut for `python -m ai_memory_cli watch`. Give it a name, such as `watch "backend setup"`, so every command until `exit` is grouped under that work session. If Windows Device Guard blocks the generated launcher, keep using `python -m ai_memory_cli watch "backend setup"`.
+`watch` is a shortcut for `python -m memvora_cli watch`. Give it a name, such as `watch "backend setup"`, so every command until `exit` is grouped under that work session. If Windows Device Guard blocks the generated launcher, keep using `python -m memvora_cli watch "backend setup"`.
 On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.
 
-Use `python -m ai_memory_cli run -- COMMAND` when you only want to record one command.
+Use `python -m memvora_cli run -- COMMAND` when you only want to record one command.
 
-On Windows, `python -m ai_memory_cli ...` is the safest form because it avoids PATH issues and Device Guard policies that can block pip's generated `ai-memory.exe` launcher. Also avoid angle bracket placeholders in CMD because they are treated as file redirection.
+On Windows, `python -m memvora_cli ...` is the safest form because it avoids PATH issues and Device Guard policies that can block pip's generated `memvora.exe` launcher. Also avoid angle bracket placeholders in CMD because they are treated as file redirection.
 
-Inside `watch`, type the real command you want to capture, for example `python --version`. Do not type `python -m ai_memory_cli run -- ...` inside `watch`, or you will capture the nested CLI command too.
+Inside `watch`, type the real command you want to capture, for example `python --version`. Do not type `python -m memvora_cli run -- ...` inside `watch`, or you will capture the nested CLI command too.
 Use `cls` on Windows or `clear` on Unix shells to clear the watch screen; those control commands are not stored or synced.
 On Windows, commands run through PowerShell, so type `ls` directly. Do not type `powershell` or `cmd` inside `watch`; nested shell launchers are ignored and not stored.
-The watch prompt shows the session name and active folder, for example `ai-memory[backend setup] C:\work\repo>`. Use `cd`, `chdir`, `cd..`, `cd /d D:\path`, `cd ~`, or `cd -` normally; successful directory changes are tracked as hashed terminal events and become the working folder for the next command.
+The watch prompt shows the session name and active folder, for example `memvora[backend setup] C:\work\repo>`. Use `cd`, `chdir`, `cd..`, `cd /d D:\path`, `cd ~`, or `cd -` normally; successful directory changes are tracked as hashed terminal events and become the working folder for the next command.
 
 ## Background agent
 
@@ -56,47 +56,47 @@ After `auth`, the background agent starts once and is installed in the Windows S
 hashes keep syncing whenever the API is reachable. Use these commands when you need manual control:
 
 ```powershell
-python -m ai_memory_cli agent status
-python -m ai_memory_cli agent stop
-python -m ai_memory_cli agent start
+python -m memvora_cli agent status
+python -m memvora_cli agent stop
+python -m memvora_cli agent start
 ```
 
 The agent does not secretly capture every terminal on the computer. Commands are captured when they run through:
 
 ```powershell
-python -m ai_memory_cli watch "backend setup"
-python -m ai_memory_cli run -- python --version
+python -m memvora_cli watch "backend setup"
+python -m memvora_cli run -- python --version
 ```
 
 To remove the startup task:
 
 ```powershell
-python -m ai_memory_cli agent stop
-python -m ai_memory_cli agent uninstall
+python -m memvora_cli agent stop
+python -m memvora_cli agent uninstall
 ```
 
-Agent logs are written to `%USERPROFILE%\.ai-memory-cli\logs\agent.log`.
+Agent logs are written to `%USERPROFILE%\.memvora-cli\logs\agent.log`.
 
 ## Storage
 
 The CLI stores config and unsynced events in a separate folder:
 
-- Windows: `%USERPROFILE%\.ai-memory-cli`
-- macOS/Linux: `~/.ai-memory-cli`
+- Windows: `%USERPROFILE%\.memvora-cli`
+- macOS/Linux: `~/.memvora-cli`
 
-Set `AI_MEMORY_CLI_HOME` to override this location.
+Set `MEMVORA_CLI_HOME` to override this location.
 
 Accepted command observations are also written as plain daily hash logs:
 
-- Windows: `%USERPROFILE%\.ai-memory-cli\history\YYYY-MM-DD.log`
-- macOS/Linux: `~/.ai-memory-cli/history/YYYY-MM-DD.log`
+- Windows: `%USERPROFILE%\.memvora-cli\history\YYYY-MM-DD.log`
+- macOS/Linux: `~/.memvora-cli/history/YYYY-MM-DD.log`
 
 These files include time/date, event hash, command hash, output hash, source, exit code, and working-folder name.
 
 The readable command/output mapping is stored locally in:
 
-- Windows: `%USERPROFILE%\.ai-memory-cli\dictionary\terminal-dictionary.json`
-- macOS/Linux: `~/.ai-memory-cli/dictionary/terminal-dictionary.json`
+- Windows: `%USERPROFILE%\.memvora-cli\dictionary\terminal-dictionary.json`
+- macOS/Linux: `~/.memvora-cli/dictionary/terminal-dictionary.json`
 
 When synced, FastAPI also stores that mapping in PostgreSQL under:
 
@@ -108,8 +108,8 @@ Use this dictionary to map `command_hash`, `output_hash`, or `event_hash` back t
 
 Each named watch session is also stored as one readable JSON file:
 
-- Windows: `%USERPROFILE%\.ai-memory-cli\dictionary\watch-sessions\<watch-id>.json`
-- macOS/Linux: `~/.ai-memory-cli/dictionary/watch-sessions/<watch-id>.json`
+- Windows: `%USERPROFILE%\.memvora-cli\dictionary\watch-sessions\<watch-id>.json`
+- macOS/Linux: `~/.memvora-cli/dictionary/watch-sessions/<watch-id>.json`
 
 When synced, FastAPI stores the same named session in PostgreSQL under:
 
@@ -117,7 +117,7 @@ When synced, FastAPI stores the same named session in PostgreSQL under:
 cli/<github-account>/<user-hash-prefix>/terminal-watch-sessions/<watch-id>.json
 ```
 
-If a command is clearly invalid, such as a pasted prompt (`ai-memory> python --version`) or a shell "not recognized" error, the CLI skips storing it as an event.
+If a command is clearly invalid, such as a pasted prompt (`memvora> python --version`) or a shell "not recognized" error, the CLI skips storing it as an event.
 
 ## Storage, meaning, and dedupe
 

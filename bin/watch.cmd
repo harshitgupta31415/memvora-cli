@@ -1,7 +1,7 @@
 @echo off
-set "AI_MEMORY_PY=%~dp0python.exe"
-if exist "%AI_MEMORY_PY%" (
-  "%AI_MEMORY_PY%" -m ai_memory_cli watch %*
+set "MEMVORA_PY=%~dp0python.exe"
+if exist "%MEMVORA_PY%" (
+  "%MEMVORA_PY%" -m memvora_cli watch %*
 ) else (
-  python -m ai_memory_cli watch %*
+  python -m memvora_cli watch %*
 )
