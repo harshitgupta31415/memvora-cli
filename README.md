@@ -25,7 +25,7 @@ python -m pip install -e .
 ## Basic flow
 
 ```powershell
-python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
+python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://memvora.vercel.app/api
 python -m memvora_cli init --project my-project --repo owner/repo --workspace .
 python -m memvora_cli workspace connect --path . --repo owner/repo --package-manager pip
 watch "backend setup"
@@ -35,8 +35,8 @@ The `auth` command verifies the website-issued token with FastAPI before it is s
 the CLI stores a SHA-512 user hash for this computer, binds the token to that hash on the server, and starts the
 background sync agent once on Windows.
 
-If you run `watch` before auth, it will prompt for the website CLI token and FastAPI URL, then continue into
-terminal capture after verification.
+If you run `watch` before auth, it will prompt for the website CLI token and Memvora API URL, defaulting to
+`https://memvora.vercel.app/api` when you press Enter, then continue into terminal capture after verification.
 
 `watch` is a shortcut for `python -m memvora_cli watch`. Give it a name, such as `watch "backend setup"`, so every command until `exit` is grouped under that work session. If Windows Device Guard blocks the generated launcher, keep using `python -m memvora_cli watch "backend setup"`.
 On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.
@@ -53,7 +53,8 @@ The watch prompt shows the session name and active folder, for example `memvora[
 ## Background agent
 
 After `auth`, the background agent starts once and is installed in the Windows Startup folder so queued terminal
-hashes keep syncing whenever the API is reachable. Use these commands when you need manual control:
+hashes keep syncing whenever the API is reachable. Command capture itself does not wait for network sync; it stores
+locally first and lets the agent upload in the background. Use these commands when you need manual control:
 
 ```powershell
 python -m memvora_cli agent status

@@ -55,9 +55,10 @@ After this, users can install from any PC:
 
 ```powershell
 python -m pip install memvora
-python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
+python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://memvora.vercel.app/api
 ```
 
 ## 5. Backend requirement
 
-The CLI needs a public FastAPI URL. `http://127.0.0.1:8000` only works on the same computer running the backend.
+The CLI needs a public Memvora API URL. Use `https://memvora.vercel.app/api` for the hosted app, or pass your own
+local API URL only when testing a backend on the same computer.

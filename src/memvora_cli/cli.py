@@ -19,7 +19,9 @@ from typing import Any
 
 from . import __version__
 
-DEFAULT_API_URL = "http://127.0.0.1:8000"
+HOSTED_API_URL = "https://memvora.vercel.app/api"
+DEFAULT_API_URL = os.getenv("MEMVORA_DEFAULT_API_URL", HOSTED_API_URL).rstrip("/")
+LEGACY_LOCAL_API_URLS = {"http://127.0.0.1:8000", "http://localhost:8000"}
 WINDOWS_AGENT_TASK_NAME = "Memvora CLI Agent"
 DEFAULT_AGENT_INTERVAL_SECONDS = 60
 DEFAULT_EXCLUDES = [
@@ -349,7 +351,10 @@ def config_path(home: Path) -> Path:
 def load_config(home: Path) -> dict[str, Any]:
     ensure_dirs(home)
     config = read_json(config_path(home), {})
-    config.setdefault("api_url", DEFAULT_API_URL)
+    current_api_url = str(config.get("api_url") or "").rstrip("/")
+    if not current_api_url or (current_api_url in LEGACY_LOCAL_API_URLS and not config.get("token")):
+        current_api_url = DEFAULT_API_URL
+    config["api_url"] = current_api_url
     config.setdefault("project", "")
     config.setdefault("repository", "")
     config.setdefault("workspace_path", ".")
@@ -808,7 +813,7 @@ def prompt_for_auth(home: Path, config: dict[str, Any]) -> dict[str, Any]:
         raise SystemExit("No token entered. Generate a CLI token from the website and run watch again.")
 
     current_api_url = api_url(config)
-    entered_api_url = input(f"FastAPI URL [{current_api_url}]: ").strip()
+    entered_api_url = input(f"Memvora API URL [{current_api_url}]: ").strip()
     if entered_api_url:
         config["api_url"] = entered_api_url.rstrip("/")
 
@@ -1061,11 +1066,6 @@ def store_captured_event(
         if watch_session_path:
             artifacts.append("session")
         print(f"memvora: {state} {event['event_hash'][:12]} ({', '.join(artifacts)})")
-
-    try:
-        sync_events(home, config, quiet=True)
-    except Exception as exc:
-        print(f"memvora: sync queued until network/API is available ({exc})", file=sys.stderr)
 
     return event, created, event_path
 
