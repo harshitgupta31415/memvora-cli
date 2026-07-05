@@ -820,12 +820,7 @@ def finish_auth(home: Path, config: dict[str, Any], token: str, start_agent: boo
     if start_agent:
         ensure_agent_started_once(home, config)
 
-    try:
-        synced = sync_events(home, config, quiet=True)
-        if synced:
-            print(f"Synced {synced} queued terminal event(s).")
-    except Exception as exc:
-        print(f"Auth saved. Sync will retry later: {exc}", file=sys.stderr)
+    print("Background sync will upload queued terminal events in batches.")
 
     return response
 
