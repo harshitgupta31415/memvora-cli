@@ -62,6 +62,10 @@ def sha512_text(value: str) -> str:
     return hashlib.sha512(value.encode("utf-8", errors="replace")).hexdigest()
 
 
+def is_verbose_output() -> bool:
+    return os.getenv("MEMVORA_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def cli_home() -> Path:
     configured = os.getenv("MEMVORA_CLI_HOME")
     if configured:
@@ -1047,10 +1051,16 @@ def store_captured_event(
     created, event_path = store_event(home, event)
     state = "stored" if created else "deduped"
     append_history(home, event, state)
-    print(f"memvora: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
-    print(f"memvora: dictionary updated at {dictionary_path}")
-    if watch_session_path:
-        print(f"memvora: watch session updated at {watch_session_path}")
+    if is_verbose_output():
+        print(f"memvora: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
+        print(f"memvora: dictionary updated at {dictionary_path}")
+        if watch_session_path:
+            print(f"memvora: watch session updated at {watch_session_path}")
+    else:
+        artifacts = ["event", "dictionary"]
+        if watch_session_path:
+            artifacts.append("session")
+        print(f"memvora: {state} {event['event_hash'][:12]} ({', '.join(artifacts)})")
 
     try:
         sync_events(home, config, quiet=True)
