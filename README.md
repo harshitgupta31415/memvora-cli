@@ -7,13 +7,13 @@ Standalone Python CLI for terminal capture, hashing, offline queueing, and sync 
 For any user machine after the package is published:
 
 ```powershell
-python -m pip install memvora-cli
+python -m pip install memvora
 ```
 
 Before PyPI publish, install from GitHub:
 
 ```powershell
-python -m pip install "memvora-cli @ git+https://github.com/YOUR_ORG/memvora-cli.git"
+python -m pip install "memvora @ git+https://github.com/YOUR_ORG/memvora.git"
 ```
 
 For local development from this CLI repo:
@@ -75,28 +75,28 @@ python -m memvora_cli agent stop
 python -m memvora_cli agent uninstall
 ```
 
-Agent logs are written to `%USERPROFILE%\.memvora-cli\logs\agent.log`.
+Agent logs are written to `%USERPROFILE%\.memvora\logs\agent.log`.
 
 ## Storage
 
 The CLI stores config and unsynced events in a separate folder:
 
-- Windows: `%USERPROFILE%\.memvora-cli`
-- macOS/Linux: `~/.memvora-cli`
+- Windows: `%USERPROFILE%\.memvora`
+- macOS/Linux: `~/.memvora`
 
 Set `MEMVORA_CLI_HOME` to override this location.
 
 Accepted command observations are also written as plain daily hash logs:
 
-- Windows: `%USERPROFILE%\.memvora-cli\history\YYYY-MM-DD.log`
-- macOS/Linux: `~/.memvora-cli/history/YYYY-MM-DD.log`
+- Windows: `%USERPROFILE%\.memvora\history\YYYY-MM-DD.log`
+- macOS/Linux: `~/.memvora/history/YYYY-MM-DD.log`
 
 These files include time/date, event hash, command hash, output hash, source, exit code, and working-folder name.
 
 The readable command/output mapping is stored locally in:
 
-- Windows: `%USERPROFILE%\.memvora-cli\dictionary\terminal-dictionary.json`
-- macOS/Linux: `~/.memvora-cli/dictionary/terminal-dictionary.json`
+- Windows: `%USERPROFILE%\.memvora\dictionary\terminal-dictionary.json`
+- macOS/Linux: `~/.memvora/dictionary/terminal-dictionary.json`
 
 When synced, FastAPI also stores that mapping in PostgreSQL under:
 
@@ -108,8 +108,8 @@ Use this dictionary to map `command_hash`, `output_hash`, or `event_hash` back t
 
 Each named watch session is also stored as one readable JSON file:
 
-- Windows: `%USERPROFILE%\.memvora-cli\dictionary\watch-sessions\<watch-id>.json`
-- macOS/Linux: `~/.memvora-cli/dictionary/watch-sessions/<watch-id>.json`
+- Windows: `%USERPROFILE%\.memvora\dictionary\watch-sessions\<watch-id>.json`
+- macOS/Linux: `~/.memvora/dictionary/watch-sessions/<watch-id>.json`
 
 When synced, FastAPI stores the same named session in PostgreSQL under:
 

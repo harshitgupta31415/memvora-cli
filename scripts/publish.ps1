@@ -11,7 +11,7 @@ $Python = if (Test-Path $VenvPython) { $VenvPython } else { "python" }
 
 Push-Location $PackageDir
 try {
-  foreach ($Path in @("dist", "build", "src\memvora_cli.egg-info")) {
+  foreach ($Path in @("dist", "build", "src\memvora.egg-info")) {
     if (Test-Path $Path) {
       Remove-Item -LiteralPath $Path -Recurse -Force
     }

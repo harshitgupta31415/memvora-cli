@@ -3,7 +3,7 @@
 Use this when the CLI should install on any PC with:
 
 ```powershell
-python -m pip install memvora-cli
+python -m pip install memvora
 ```
 
 ## 1. Choose the package source
@@ -11,13 +11,13 @@ python -m pip install memvora-cli
 PyPI install:
 
 ```powershell
-python -m pip install memvora-cli
+python -m pip install memvora
 ```
 
 GitHub install before PyPI:
 
 ```powershell
-python -m pip install "memvora-cli @ git+https://github.com/YOUR_ORG/memvora-cli.git"
+python -m pip install "memvora @ git+https://github.com/YOUR_ORG/memvora.git"
 ```
 
 ## 2. Build the package
@@ -33,7 +33,7 @@ This creates files in `dist/`.
 
 ```powershell
 python -m twine upload --repository testpypi dist/*
-python -m pip install --index-url https://test.pypi.org/simple/ memvora-cli
+python -m pip install --index-url https://test.pypi.org/simple/ memvora
 python -m memvora_cli --version
 ```
 
@@ -54,7 +54,7 @@ From this CLI repo, run the helper script. It prompts for the API token locally:
 After this, users can install from any PC:
 
 ```powershell
-python -m pip install memvora-cli
+python -m pip install memvora
 python -m memvora_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
 ```
 
