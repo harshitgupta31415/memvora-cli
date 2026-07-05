@@ -13,7 +13,7 @@ python -m pip install memvora
 Before PyPI publish, install from GitHub:
 
 ```powershell
-python -m pip install "memvora @ git+https://github.com/YOUR_ORG/memvora.git"
+python -m pip install "memvora @ git+https://github.com/harshitgupta31415/memvora-cli.git"
 ```
 
 For local development from this CLI repo:

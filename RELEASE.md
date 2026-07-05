@@ -17,7 +17,7 @@ python -m pip install memvora
 GitHub install before PyPI:
 
 ```powershell
-python -m pip install "memvora @ git+https://github.com/YOUR_ORG/memvora.git"
+python -m pip install "memvora @ git+https://github.com/harshitgupta31415/memvora-cli.git"
 ```
 
 ## 2. Build the package

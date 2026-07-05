@@ -1258,7 +1258,6 @@ def command_workspace_connect(args: argparse.Namespace) -> int:
     identity = client_identity(home, config)
     payload = {
         "payload": {
-            "source": "memvora-cli",
             "source": "memvora",
             "workspace_path": args.path,
             "repository": args.repo or config.get("repository") or "",
@@ -1286,7 +1285,6 @@ def command_mcp_connect(args: argparse.Namespace) -> int:
     save_config(home, config)
     payload = {
         "payload": {
-            "source": "memvora-cli",
             "source": "memvora",
             "server": args.server,
             "project": config.get("project") or "",
@@ -1312,7 +1310,6 @@ def command_chat_connect(args: argparse.Namespace) -> int:
     save_config(home, config)
     payload = {
         "payload": {
-            "source": "memvora-cli",
             "source": "memvora",
             "provider": args.provider,
             "project": config.get("project") or "",
