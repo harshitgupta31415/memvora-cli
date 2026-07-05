@@ -27,8 +27,8 @@ python -m pip install -e .
 ```powershell
 python -m ai_memory_cli auth --token TOKEN_FROM_WEBSITE --api-url https://api.your-domain.com
 python -m ai_memory_cli init --project my-project --repo owner/repo --workspace .
-python -m ai_memory_cli workspace connect --path . --repo owner/repo --editor vscode --package-manager pip
-watch
+python -m ai_memory_cli workspace connect --path . --repo owner/repo --package-manager pip
+watch "backend setup"
 ```
 
 The `auth` command verifies the website-issued token with FastAPI before it is saved locally. After verification,
@@ -38,7 +38,7 @@ background sync agent once on Windows.
 If you run `watch` before auth, it will prompt for the website CLI token and FastAPI URL, then continue into
 terminal capture after verification.
 
-`watch` is a shortcut for `python -m ai_memory_cli watch`. If Windows Device Guard blocks the generated launcher, keep using `python -m ai_memory_cli watch`.
+`watch` is a shortcut for `python -m ai_memory_cli watch`. Give it a name, such as `watch "backend setup"`, so every command until `exit` is grouped under that work session. If Windows Device Guard blocks the generated launcher, keep using `python -m ai_memory_cli watch "backend setup"`.
 On Windows the shortcut is installed as `watch.cmd`; the Python Scripts folder must be on `PATH` for bare `watch` to resolve.
 
 Use `python -m ai_memory_cli run -- COMMAND` when you only want to record one command.
@@ -48,7 +48,7 @@ On Windows, `python -m ai_memory_cli ...` is the safest form because it avoids P
 Inside `watch`, type the real command you want to capture, for example `python --version`. Do not type `python -m ai_memory_cli run -- ...` inside `watch`, or you will capture the nested CLI command too.
 Use `cls` on Windows or `clear` on Unix shells to clear the watch screen; those control commands are not stored or synced.
 On Windows, commands run through PowerShell, so type `ls` directly. Do not type `powershell` or `cmd` inside `watch`; nested shell launchers are ignored and not stored.
-The watch prompt shows the active folder, for example `ai-memory C:\work\repo>`. Use `cd`, `chdir`, `cd..`, `cd /d D:\path`, `cd ~`, or `cd -` normally; successful directory changes are tracked as hashed terminal events and become the working folder for the next command.
+The watch prompt shows the session name and active folder, for example `ai-memory[backend setup] C:\work\repo>`. Use `cd`, `chdir`, `cd..`, `cd /d D:\path`, `cd ~`, or `cd -` normally; successful directory changes are tracked as hashed terminal events and become the working folder for the next command.
 
 ## Background agent
 
@@ -64,7 +64,7 @@ python -m ai_memory_cli agent start
 The agent does not secretly capture every terminal on the computer. Commands are captured when they run through:
 
 ```powershell
-python -m ai_memory_cli watch
+python -m ai_memory_cli watch "backend setup"
 python -m ai_memory_cli run -- python --version
 ```
 
@@ -98,22 +98,36 @@ The readable command/output mapping is stored locally in:
 - Windows: `%USERPROFILE%\.ai-memory-cli\dictionary\terminal-dictionary.json`
 - macOS/Linux: `~/.ai-memory-cli/dictionary/terminal-dictionary.json`
 
-When synced, FastAPI also stores that mapping in:
+When synced, FastAPI also stores that mapping in PostgreSQL under:
 
 ```text
-local-storage/cli/<github-account>/<user-hash-prefix>/terminal-dictionary.json
+cli/<github-account>/<user-hash-prefix>/terminal-dictionary.json
 ```
 
 Use this dictionary to map `command_hash`, `output_hash`, or `event_hash` back to the command text and captured output.
+
+Each named watch session is also stored as one readable JSON file:
+
+- Windows: `%USERPROFILE%\.ai-memory-cli\dictionary\watch-sessions\<watch-id>.json`
+- macOS/Linux: `~/.ai-memory-cli/dictionary/watch-sessions/<watch-id>.json`
+
+When synced, FastAPI stores the same named session in PostgreSQL under:
+
+```text
+cli/<github-account>/<user-hash-prefix>/terminal-watch-sessions/<watch-id>.json
+```
 
 If a command is clearly invalid, such as a pasted prompt (`ai-memory> python --version`) or a shell "not recognized" error, the CLI skips storing it as an event.
 
 ## Storage, meaning, and dedupe
 
-The CLI stores two related records:
+The CLI stores three related records:
 
-- hash event files in `events/`, `outbox/`, `sent/`, and backend `terminal-events/`
+- readable event files in `events/`, `outbox/`, `sent/`, and backend `terminal-events/`
 - readable mapping in `terminal-dictionary.json`
+- readable named watch sessions in `dictionary/watch-sessions/`
+
+Event files contain readable fields such as `command`, `stdout`, `stderr`, `output`, and `cwd`, plus `command_hash`, `output_hash`, and `event_hash` for dedupe.
 
 The dictionary contains:
 
@@ -123,6 +137,8 @@ The dictionary contains:
 - `events[event_hash].command`
 - `events[event_hash].stdout`
 - `events[event_hash].stderr`
+- `watch_sessions[watch_id].watch_name`
+- `watch_sessions[watch_id].event_hashes`
 
 If the same command produces the same output again, the CLI keeps one event hash and increments `duplicate_count`.
 

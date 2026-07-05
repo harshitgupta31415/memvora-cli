@@ -72,6 +72,7 @@ def cli_home() -> Path:
 def ensure_dirs(home: Path) -> None:
     for folder in ["events", "outbox", "sent", "logs", "history", "dictionary"]:
         (home / folder).mkdir(parents=True, exist_ok=True)
+    (home / "dictionary" / "watch-sessions").mkdir(parents=True, exist_ok=True)
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -106,6 +107,7 @@ def append_history(home: Path, event: dict[str, Any], state: str) -> None:
         timestamp,
         f"state={state}",
         f"source={event.get('source', '-')}",
+        f"watch={event.get('watch_name') or event.get('metadata', {}).get('watch_name') or '-'}",
         f"exit={event.get('exit_code', '-')}",
         f"event={str(event.get('event_hash', ''))[:12]}",
         f"command_hash={event.get('command_hash', '-')}",
@@ -118,6 +120,28 @@ def append_history(home: Path, event: dict[str, Any], state: str) -> None:
 
 def terminal_dictionary_path(home: Path) -> Path:
     return home / "dictionary" / "terminal-dictionary.json"
+
+
+def terminal_watch_session_path(home: Path, watch_id: str) -> Path:
+    return home / "dictionary" / "watch-sessions" / f"{watch_id}.json"
+
+
+def clean_watch_name(value: str, cwd: Path) -> str:
+    cleaned = re.sub(r"\s+", " ", value.strip())
+    if cleaned:
+        return cleaned[:100]
+    return cwd.resolve().name or "terminal-session"
+
+
+def make_watch_context(name: str, cwd: Path) -> dict[str, str]:
+    watch_name = clean_watch_name(name, cwd)
+    started_at = utc_now()
+    watch_id = sha256_text(f"watch\0{watch_name}\0{started_at}\0{cwd.resolve()}")[:20]
+    return {
+        "watch_id": watch_id,
+        "watch_name": watch_name,
+        "watch_started_at": started_at,
+    }
 
 
 def make_terminal_dictionary_record(
@@ -144,8 +168,17 @@ def make_terminal_dictionary_record(
         "source": event.get("source"),
         "project": event.get("project"),
         "repository": event.get("repository"),
+        "watch_id": event.get("watch_id") or event.get("metadata", {}).get("watch_id"),
+        "watch_name": event.get("watch_name") or event.get("metadata", {}).get("watch_name"),
+        "watch_started_at": event.get("watch_started_at") or event.get("metadata", {}).get("watch_started_at"),
         "metadata": event.get("metadata", {}),
     }
+
+
+def append_unique(values: list[Any], value: Any) -> list[Any]:
+    if value and value not in values:
+        values.append(value)
+    return values
 
 
 def store_terminal_dictionary(home: Path, record: dict[str, Any]) -> Path:
@@ -162,19 +195,40 @@ def store_terminal_dictionary(home: Path, record: dict[str, Any]) -> Path:
             "commands": {},
             "outputs": {},
             "events": {},
+            "watch_sessions": {},
         },
     )
     dictionary.setdefault("commands", {})
     dictionary.setdefault("outputs", {})
     dictionary.setdefault("events", {})
+    dictionary.setdefault("watch_sessions", {})
     dictionary["updated_at"] = now
 
     command_hash = str(record.get("command_hash") or "")
     output_hash = str(record.get("output_hash") or "")
     event_hash = str(record.get("event_hash") or "")
+    watch_id = str(record.get("watch_id") or "")
+    watch_name = str(record.get("watch_name") or "")
+    watch_started_at = str(record.get("watch_started_at") or "")
+
+    if watch_id:
+        watch_record = dictionary["watch_sessions"].get(watch_id, {})
+        event_hashes = list(watch_record.get("event_hashes") or [])
+        append_unique(event_hashes, event_hash)
+        dictionary["watch_sessions"][watch_id] = {
+            "watch_id": watch_id,
+            "watch_name": watch_name or watch_record.get("watch_name") or "terminal-session",
+            "watch_started_at": watch_started_at or watch_record.get("watch_started_at") or record.get("observed_at") or now,
+            "first_seen_at": watch_record.get("first_seen_at") or record.get("observed_at") or now,
+            "last_seen_at": record.get("observed_at") or now,
+            "event_hashes": event_hashes,
+            "event_count": len(event_hashes),
+        }
 
     if command_hash:
         command_record = dictionary["commands"].get(command_hash, {})
+        watch_ids = list(command_record.get("watch_ids") or [])
+        append_unique(watch_ids, watch_id)
         dictionary["commands"][command_hash] = {
             "command_hash": command_hash,
             "command": str(record.get("command") or ""),
@@ -182,10 +236,13 @@ def store_terminal_dictionary(home: Path, record: dict[str, Any]) -> Path:
             "first_seen_at": command_record.get("first_seen_at") or record.get("observed_at") or now,
             "last_seen_at": record.get("observed_at") or now,
             "observed_count": int(command_record.get("observed_count", 0)) + 1,
+            "watch_ids": watch_ids,
         }
 
     if output_hash:
         output_record = dictionary["outputs"].get(output_hash, {})
+        watch_ids = list(output_record.get("watch_ids") or [])
+        append_unique(watch_ids, watch_id)
         stdout = str(record.get("stdout") or "")
         stderr = str(record.get("stderr") or "")
         dictionary["outputs"][output_hash] = {
@@ -197,18 +254,75 @@ def store_terminal_dictionary(home: Path, record: dict[str, Any]) -> Path:
             "first_seen_at": output_record.get("first_seen_at") or record.get("observed_at") or now,
             "last_seen_at": record.get("observed_at") or now,
             "observed_count": int(output_record.get("observed_count", 0)) + 1,
+            "watch_ids": watch_ids,
         }
 
     if event_hash:
         event_record = dictionary["events"].get(event_hash, {})
+        watch_ids = list(event_record.get("watch_ids") or [])
+        append_unique(watch_ids, watch_id)
         dictionary["events"][event_hash] = {
             **record,
             "first_seen_at": event_record.get("first_seen_at") or record.get("observed_at") or now,
             "last_seen_at": record.get("observed_at") or now,
             "observed_count": int(event_record.get("observed_count", 0)) + 1,
+            "watch_ids": watch_ids,
         }
 
     write_json(path, dictionary)
+    return path
+
+
+def store_terminal_watch_session(home: Path, record: dict[str, Any]) -> Path | None:
+    watch_id = str(record.get("watch_id") or "")
+    if not watch_id:
+        return None
+
+    ensure_dirs(home)
+    path = terminal_watch_session_path(home, watch_id)
+    now = utc_now()
+    session = read_json(
+        path,
+        {
+            "version": 1,
+            "kind": "ai-memory-cli-watch-session",
+            "watch_id": watch_id,
+            "watch_name": str(record.get("watch_name") or "terminal-session"),
+            "watch_started_at": str(record.get("watch_started_at") or record.get("started_at") or now),
+            "created_at": now,
+            "updated_at": now,
+            "commands": [],
+        },
+    )
+    session["watch_name"] = str(record.get("watch_name") or session.get("watch_name") or "terminal-session")
+    session["watch_started_at"] = str(record.get("watch_started_at") or session.get("watch_started_at") or record.get("started_at") or now)
+    session["updated_at"] = now
+
+    commands = session.setdefault("commands", [])
+    event_hash = str(record.get("event_hash") or "")
+    existing = next((item for item in commands if isinstance(item, dict) and item.get("event_hash") == event_hash), None)
+    readable = {
+        "event_hash": event_hash,
+        "command_hash": record.get("command_hash"),
+        "output_hash": record.get("output_hash"),
+        "command": str(record.get("command") or ""),
+        "stdout": str(record.get("stdout") or ""),
+        "stderr": str(record.get("stderr") or ""),
+        "exit_code": record.get("exit_code"),
+        "cwd": record.get("cwd"),
+        "cwd_tail": record.get("cwd_tail"),
+        "started_at": record.get("started_at"),
+        "ended_at": record.get("ended_at"),
+        "observed_at": record.get("observed_at"),
+    }
+    if existing:
+        existing.update(readable)
+        existing["observed_count"] = int(existing.get("observed_count", 1)) + 1
+    else:
+        readable["observed_count"] = 1
+        commands.append(readable)
+    session["command_count"] = len(commands)
+    write_json(path, session)
     return path
 
 
@@ -489,6 +603,11 @@ def watch_prompt(cwd: Path) -> str:
     return f"ai-memory {cwd.resolve()}> "
 
 
+def named_watch_prompt(cwd: Path, watch_context: dict[str, str]) -> str:
+    watch_name = watch_context.get("watch_name") or "terminal-session"
+    return f"ai-memory[{watch_name}] {cwd.resolve()}> "
+
+
 def is_interactive_shell_command(command: str) -> bool:
     tokens = normalize_command(command).lower().split()
     if not tokens:
@@ -721,6 +840,7 @@ def make_terminal_event(
     cwd: Path,
     config: dict[str, Any],
     source: str,
+    watch_context: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     normalized_command = normalize_command(command)
     normalized_output = normalize_output(stdout, stderr)
@@ -728,15 +848,21 @@ def make_terminal_event(
     output_hash = sha256_text(normalized_output)
     event_hash = sha256_text(f"v1\0{normalized_command}\0{normalized_output}\0{exit_code}")
     cwd_text = str(cwd.resolve())
-    return {
+    event = {
         "event_hash": event_hash,
         "command_hash": command_hash,
         "output_hash": output_hash,
+        "command": command,
+        "normalized_command": normalized_command,
+        "output": normalized_output,
+        "stdout": stdout,
+        "stderr": stderr,
         "started_at": started_at,
         "ended_at": ended_at,
         "observed_at": ended_at,
         "duration_ms": duration_ms,
         "exit_code": exit_code,
+        "cwd": cwd_text,
         "cwd_hash": sha256_text(cwd_text),
         "shell": selected_shell(),
         "project": str(config.get("project") or ""),
@@ -752,6 +878,18 @@ def make_terminal_event(
             "cwd_tail": cwd.resolve().name,
         },
     }
+    if watch_context:
+        event["watch_id"] = watch_context.get("watch_id")
+        event["watch_name"] = watch_context.get("watch_name")
+        event["watch_started_at"] = watch_context.get("watch_started_at")
+        event["metadata"].update(
+            {
+                "watch_id": watch_context.get("watch_id"),
+                "watch_name": watch_context.get("watch_name"),
+                "watch_started_at": watch_context.get("watch_started_at"),
+            }
+        )
+    return event
 
 
 def store_event(home: Path, event: dict[str, Any]) -> tuple[bool, Path]:
@@ -763,12 +901,29 @@ def store_event(home: Path, event: dict[str, Any]) -> tuple[bool, Path]:
     if existing:
         existing["total_observed_count"] = int(existing.get("total_observed_count", 1)) + 1
         existing["last_observed_at"] = event["observed_at"]
+        if event.get("watch_id"):
+            watch_ids = list(existing.get("watch_ids") or [])
+            append_unique(watch_ids, event.get("watch_id"))
+            existing["watch_ids"] = watch_ids
+            existing["last_watch_id"] = event.get("watch_id")
+            existing["last_watch_name"] = event.get("watch_name")
         write_json(event_path, existing)
 
         outbound = read_json(outbox_path, None)
         if outbound:
             outbound["duplicate_count"] = int(outbound.get("duplicate_count", 1)) + 1
             outbound["observed_at"] = event["observed_at"]
+            if event.get("watch_id"):
+                outbound["watch_id"] = event.get("watch_id")
+                outbound["watch_name"] = event.get("watch_name")
+                outbound["watch_started_at"] = event.get("watch_started_at")
+                outbound.setdefault("metadata", {}).update(
+                    {
+                        "watch_id": event.get("watch_id"),
+                        "watch_name": event.get("watch_name"),
+                        "watch_started_at": event.get("watch_started_at"),
+                    }
+                )
         else:
             outbound = dict(event)
             outbound["duplicate_count"] = 1
@@ -865,6 +1020,7 @@ def store_captured_event(
     cwd: Path,
     source: str,
     extra_metadata: dict[str, Any] | None = None,
+    watch_context: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], bool, Path]:
     event = make_terminal_event(
         command=command,
@@ -877,18 +1033,20 @@ def store_captured_event(
         cwd=cwd,
         config=config,
         source=source,
+        watch_context=watch_context,
     )
     if extra_metadata:
         event["metadata"].update(extra_metadata)
-    dictionary_path = store_terminal_dictionary(
-        home,
-        make_terminal_dictionary_record(event, command, stdout, stderr, cwd),
-    )
+    dictionary_record = make_terminal_dictionary_record(event, command, stdout, stderr, cwd)
+    dictionary_path = store_terminal_dictionary(home, dictionary_record)
+    watch_session_path = store_terminal_watch_session(home, dictionary_record)
     created, event_path = store_event(home, event)
     state = "stored" if created else "deduped"
     append_history(home, event, state)
     print(f"ai-memory: {state} terminal hash {event['event_hash'][:12]} at {event_path}")
     print(f"ai-memory: dictionary updated at {dictionary_path}")
+    if watch_session_path:
+        print(f"ai-memory: watch session updated at {watch_session_path}")
 
     try:
         sync_events(home, config, quiet=True)
@@ -905,6 +1063,7 @@ def capture_cd_command(
     cwd: Path,
     previous_cwd: Path | None,
     source: str,
+    watch_context: dict[str, str] | None = None,
 ) -> tuple[int, Path, Path | None]:
     require_verified_auth(home, config)
     target = parse_cd_command(command)
@@ -948,6 +1107,7 @@ def capture_cd_command(
                 "new_cwd_hash": sha256_text(str(new_cwd.resolve())),
                 "new_cwd_tail": new_cwd.resolve().name,
             },
+            watch_context=watch_context,
         )
 
     return 0, new_cwd.resolve(), old_cwd if changed else previous_cwd
@@ -965,6 +1125,7 @@ def capture_command(
     include_excluded: bool,
     source: str,
     cwd: Path | None = None,
+    watch_context: dict[str, str] | None = None,
 ) -> int:
     if is_clear_command(command):
         clear_console()
@@ -1010,6 +1171,7 @@ def capture_command(
         duration_ms=duration_ms,
         cwd=effective_cwd,
         source=source,
+        watch_context=watch_context,
     )
     return completed.returncode
 
@@ -1067,7 +1229,7 @@ def command_init(args: argparse.Namespace) -> int:
         "project": config.get("project") or "memory-project",
         "repository": config.get("repository") or "",
         "workspace_path": config.get("workspace_path") or ".",
-        "integrations": ["github", "cli", "editor", "chat", "mcp"],
+        "integrations": ["github", "cli"],
     }
     try:
         response = http_json("POST", f"{api_url(config)}/projects/init", payload, token)
@@ -1075,7 +1237,7 @@ def command_init(args: argparse.Namespace) -> int:
         print(f"Initialized project: {project.get('id', payload['project'])}")
     except Exception as exc:
         print(f"Project config saved locally. Server init will need retry: {exc}", file=sys.stderr)
-    print("Start terminal capture with: watch")
+    print('Start terminal capture with: watch "backend setup"')
     return 0
 
 
@@ -1178,10 +1340,14 @@ def command_watch(args: argparse.Namespace) -> int:
 
     cwd = default_command_cwd(config)
     previous_cwd: Path | None = None
-    print("AI Memory watch mode. Type commands to run and capture. Type exit to stop.")
+    raw_watch_name = str(getattr(args, "name_option", "") or getattr(args, "name", "") or "").strip()
+    if not raw_watch_name:
+        raw_watch_name = input("Name this watch session: ").strip()
+    watch_context = make_watch_context(raw_watch_name, cwd)
+    print(f"AI Memory watch mode: {watch_context['watch_name']}. Type commands to run and capture. Type exit to stop.")
     while True:
         try:
-            command = input(watch_prompt(cwd)).strip()
+            command = input(named_watch_prompt(cwd, watch_context)).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -1203,9 +1369,9 @@ def command_watch(args: argparse.Namespace) -> int:
             print("ai-memory: do not start a nested shell here. Type commands directly, for example: ls")
             continue
         if parse_cd_command(command) is not None:
-            _, cwd, previous_cwd = capture_cd_command(home, config, command, cwd, previous_cwd, "watch")
+            _, cwd, previous_cwd = capture_cd_command(home, config, command, cwd, previous_cwd, "watch", watch_context)
             continue
-        capture_command(home, config, command, args.include_excluded, "watch", cwd=cwd)
+        capture_command(home, config, command, args.include_excluded, "watch", cwd=cwd, watch_context=watch_context)
     return 0
 
 
@@ -1565,6 +1731,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.set_defaults(func=command_run)
 
     watch = subparsers.add_parser("watch", help="Start a managed terminal that captures commands and output.")
+    watch.add_argument("name", nargs="?", default="", help="Name for this watch session, for example: backend setup.")
+    watch.add_argument("--name", dest="name_option", default="", help="Name for this watch session.")
     watch.add_argument("--include-excluded", action="store_true")
     watch.add_argument("--version", action="version", version=f"ai-memory {__version__}")
     watch.set_defaults(func=command_watch)
@@ -1635,6 +1803,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def watch_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="watch", description="Start AI Memory terminal capture.")
+    parser.add_argument("name", nargs="?", default="", help="Name for this watch session, for example: backend setup.")
+    parser.add_argument("--name", dest="name_option", default="", help="Name for this watch session.")
     parser.add_argument("--include-excluded", action="store_true")
     parser.add_argument("--version", action="version", version=f"ai-memory {__version__}")
     args = parser.parse_args(argv)
